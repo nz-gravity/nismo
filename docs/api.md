@@ -106,6 +106,7 @@ sampler = MINSampler(
     rng=np.random.default_rng(42),
     proposal_batch_size=64,
     tie_policy="strict",
+    parallel=ParallelSettings(n_workers=1, queue_size=1),
 )
 result = sampler.run(
     dlogz=1e-4,
@@ -378,6 +379,29 @@ Every array is read-only and has shape
 `(niter,)`; early `logz_stability` entries are `NaN` until its exact window is
 available.
 
+## Replacement prefetch parallelism
+
+`ParallelSettings(n_workers=N, queue_size=Q)` constructs up to `Q` complete
+replacement attempts per proposal epoch. `N > 1` uses one persistent process
+pool; `N = 1, Q > 1` exercises identical FIFO queue semantics without
+multiprocessing. Only the coordinator removes a dead point, updates prior
+volume and evidence, or evaluates stopping criteria. Candidates retain their
+creation threshold and proposal revision and are revalidated against the
+current lexicographic constraint immediately before use.
+
+`rwalk`, `s-rwalk`, and `en-rwalk` freeze scale and geometry for each refill,
+then aggregate scale tuning once the epoch has drained. Adaptive Morph refit
+boundaries also end epochs. The coordinator reserves likelihood-call budgets
+before submission, so completed worker work cannot overshoot
+`max_likelihood_calls`.
+
+`result.queue_diagnostics` contains submitted/completed/consumed/stale/
+invalidated counts, refill count, total/used/wasted prefetch likelihood calls,
+and the derived `queue_efficiency` and `compute_efficiency`. Models, proposals,
+and their callables must be pickleable for `n_workers > 1`. Fine-grained
+`CallableModel.scalar_likelihood_map` execution is disabled inside replacement
+workers to avoid nested multiprocessing.
+
 ## Failure semantics
 
 Scientific termination reasons are:
@@ -408,7 +432,7 @@ retries at the next configured interval.
 `mins.diagnostics.summarize(result)` reports posterior ESS, proposal acceptance,
 maximum proposals per replacement, threshold monotonicity, the separate
 conservative max-live remainder, and the final values of every stopping
-diagnostic and streak.
+diagnostic and streak, plus replacement-queue and compute efficiency.
 
 `plot_run`, `plot_nested_progress`, `plot_weight_health`, and
 `plot_posterior_1d` return Matplotlib objects. `plot_nested_progress` shows the

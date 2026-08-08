@@ -13,6 +13,7 @@ from scipy.special import logsumexp
 from .config import MINSConfig
 from .proposals import MorphMetadata
 from .quadrature import live_log_contributions
+from .replacement import QueueDiagnostics
 from .stopping import SCIENTIFIC_TERMINATION_REASONS
 
 
@@ -199,11 +200,14 @@ class MINSResult:
     proposal_updates: tuple[ProposalUpdateRecord, ...]
     nonfinite_counts: tuple[tuple[str, int], ...]
     warnings: tuple[str, ...]
+    queue_diagnostics: QueueDiagnostics
     ensemble_move_history: EnsembleMoveHistory | None = None
 
     def __post_init__(self) -> None:
         if self.nlive != self.config.n_live:
             raise ValueError("nlive must equal config.n_live")
+        if not isinstance(self.queue_diagnostics, QueueDiagnostics):
+            raise ValueError("queue_diagnostics must be a QueueDiagnostics")
         if self.niter < 0 or self.niter != len(self.dead_log_psi0):
             raise ValueError("niter must equal the number of dead points")
         if len(self.history.iteration) != self.niter:

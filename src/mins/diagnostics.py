@@ -26,6 +26,8 @@ class RunDiagnostics:
     final_live_logz_error: float
     final_logz_stability: float
     final_stopping_streak: int
+    queue_efficiency: float
+    compute_efficiency: float
 
 
 def posterior_ess(result: MINSResult) -> float:
@@ -72,4 +74,6 @@ def summarize(result: MINSResult) -> RunDiagnostics:
         final_live_logz_error=final_live_logz_error,
         final_logz_stability=final_logz_stability,
         final_stopping_streak=final_stopping_streak,
+        queue_efficiency=result.queue_diagnostics.queue_efficiency,
+        compute_efficiency=result.queue_diagnostics.compute_efficiency,
     )

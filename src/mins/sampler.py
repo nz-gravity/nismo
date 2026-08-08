@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+import multiprocessing as mp
 import time
 from collections.abc import Mapping
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -14,6 +17,7 @@ from .adaptive import AdaptiveMorphController
 from .config import (
     EnsembleRWalkSettings,
     MINSConfig,
+    ParallelSettings,
     ProposalScheme,
     RWalkSettings,
     SRWalkSettings,
@@ -22,6 +26,7 @@ from .config import (
 from .constrained import (
     BatchEvaluator,
     ConstrainedAttempt,
+    EvaluatedPoint,
     draw_constrained,
     validate_proposal_sample,
 )
@@ -33,7 +38,7 @@ from .mcmc import (
     draw_rwalk_constrained,
     draw_srwalk_constrained,
 )
-from .model import Model
+from .model import CallableModel, Model
 from .progress import ProgressOption, create_progress_reporter
 from .proposals import MorphProposal, Proposal, RefittableProposal
 from .quadrature import (
@@ -42,6 +47,15 @@ from .quadrature import (
     estimated_live_logz,
     finalize_quadrature,
     update_log_weighted_mean,
+)
+from .replacement import (
+    EvaluationCounts,
+    QueueAccounting,
+    ReplacementJob,
+    ReplacementQueue,
+    ReplacementResult,
+    build_replacement,
+    prepare_replacement_snapshot,
 )
 from .results import EnsembleMoveHistory, MINSResult, RunHistory
 from .stopping import (
@@ -159,6 +173,84 @@ def _draw_replacement(
     raise RuntimeError(f"unsupported proposal scheme: {config.proposal_scheme!r}")
 
 
+def _evaluation_counts(evaluator: BatchEvaluator) -> EvaluationCounts:
+    return EvaluationCounts.from_evaluator(evaluator)
+
+
+def _evaluation_delta(
+    before: EvaluationCounts,
+    after: EvaluationCounts,
+) -> EvaluationCounts:
+    return EvaluationCounts(
+        likelihood_calls=after.likelihood_calls - before.likelihood_calls,
+        prior_calls=after.prior_calls - before.prior_calls,
+        outside_prior=after.outside_prior - before.outside_prior,
+        zero_likelihood=after.zero_likelihood - before.zero_likelihood,
+    )
+
+
+def _add_evaluation_counts(
+    evaluator: BatchEvaluator,
+    counts: EvaluationCounts,
+) -> None:
+    evaluator.n_likelihood_calls += counts.likelihood_calls
+    evaluator.n_prior_calls += counts.prior_calls
+    evaluator.outside_prior += counts.outside_prior
+    evaluator.zero_likelihood += counts.zero_likelihood
+
+
+def _worker_model(model: Any, *, n_workers: int) -> Any:
+    """Disable an existing fine-grained pool map inside replacement workers."""
+    if (
+        n_workers > 1
+        and isinstance(model, CallableModel)
+        and model.scalar_likelihood_map is not None
+    ):
+        return replace(model, scalar_likelihood_map=None)
+    return model
+
+
+def _fixed_job_call_requirement(
+    *,
+    config: MINSConfig,
+    rwalk_sampler: RWalkSampler | None,
+    srwalk_sampler: SRWalkSampler | None,
+) -> int | None:
+    """Return an exact per-job call count, or ``None`` for rejection draws."""
+    if config.proposal_scheme == "rwalk":
+        if rwalk_sampler is None:  # pragma: no cover - run initializes it
+            raise RuntimeError("rwalk controller is not initialized")
+        return rwalk_sampler.walks
+    if config.proposal_scheme == "s-rwalk":
+        if srwalk_sampler is None:  # pragma: no cover - run initializes it
+            raise RuntimeError("s-rwalk controller is not initialized")
+        return srwalk_sampler.n_steps
+    if config.proposal_scheme == "en-rwalk":
+        settings = config.ensemble_rwalk_settings
+        return settings.n_walkers * settings.n_sweeps
+    return None
+
+
+def _commit_replacement(
+    *,
+    worst: int,
+    point: EvaluatedPoint,
+    live_theta: NDArray[np.float64],
+    live_log_likelihood: NDArray[np.float64],
+    live_log_prior: NDArray[np.float64],
+    live_log_q0: NDArray[np.float64],
+    live_log_psi0: NDArray[np.float64],
+    live_tie_breakers: NDArray[np.float64],
+) -> None:
+    """Commit exactly one coordinator-owned live-point replacement."""
+    live_theta[worst] = point.theta
+    live_log_likelihood[worst] = point.log_likelihood
+    live_log_prior[worst] = point.log_prior
+    live_log_q0[worst] = point.log_q0
+    live_log_psi0[worst] = point.log_psi0
+    live_tie_breakers[worst] = point.tie_breaker
+
+
 class MINSampler:
     """Fixed-importance sampler with selectable Morph proposal schemes.
 
@@ -191,6 +283,8 @@ class MINSampler:
         Optional immutable Gaussian-covariance random-walk settings.
     ensemble_rwalk_settings
         Optional immutable ensemble random-walk settings.
+    parallel
+        Optional complete-replacement worker and FIFO prefetch settings.
     """
 
     def __init__(
@@ -207,6 +301,7 @@ class MINSampler:
         rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
+        parallel: ParallelSettings | None = None,
     ) -> None:
         if model.ndim != importance_morph.ndim:
             raise ValueError(
@@ -240,6 +335,7 @@ class MINSampler:
             if ensemble_rwalk_settings is None
             else ensemble_rwalk_settings
         )
+        self.parallel = ParallelSettings() if parallel is None else parallel
         MINSConfig(
             n_live=n_live,
             proposal_batch_size=proposal_batch_size,
@@ -249,6 +345,7 @@ class MINSampler:
             rwalk_settings=self.rwalk_settings,
             srwalk_settings=self.srwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,
+            parallel=self.parallel,
         )
         if proposal_scheme == "rwalk":
             RWalkSampler(settings=self.rwalk_settings, ndim=model.ndim)
@@ -278,6 +375,7 @@ class MINSampler:
         rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
+        parallel: ParallelSettings | None = None,
     ) -> MINSampler:
         """Fit MorphZ once and construct a sampler.
 
@@ -301,6 +399,7 @@ class MINSampler:
             rwalk_settings=rwalk_settings,
             srwalk_settings=srwalk_settings,
             ensemble_rwalk_settings=ensemble_rwalk_settings,
+            parallel=parallel,
         )
 
     def run(
@@ -365,6 +464,7 @@ class MINSampler:
             rwalk_settings=self.rwalk_settings,
             srwalk_settings=self.srwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,
+            parallel=self.parallel,
             max_iterations=max_iterations,
             max_proposals_per_replacement=max_proposals_per_replacement,
             max_likelihood_calls=max_likelihood_calls,
@@ -471,6 +571,179 @@ class MINSampler:
         dead_log_psi_mean = 0.0
         stopping_streak = 0
         termination_reason = ""
+        queue = ReplacementQueue()
+        queue_accounting = QueueAccounting()
+        compatibility_mode = (
+            config.parallel.n_workers == 1 and config.parallel.queue_size == 1
+        )
+        executor = (
+            ProcessPoolExecutor(
+                max_workers=config.parallel.n_workers,
+                mp_context=mp.get_context("spawn"),
+            )
+            if not compatibility_mode and config.parallel.n_workers > 1
+            else None
+        )
+        worker_model = _worker_model(
+            self.model,
+            n_workers=config.parallel.n_workers,
+        )
+        job_seed_sequence = (
+            None
+            if compatibility_mode
+            else np.random.SeedSequence(
+                tuple(
+                    int(value)
+                    for value in self.rng.integers(
+                        0,
+                        2**32,
+                        size=4,
+                        dtype=np.uint32,
+                    )
+                )
+            )
+        )
+        next_job_id = 0
+        epoch_results: list[ReplacementResult] = []
+
+        def active_proposal_revision() -> int:
+            if self.adaptive_proposal_controller is None:
+                return 0
+            return self.adaptive_proposal_controller.revision
+
+        def finish_proposal_epoch() -> None:
+            nonlocal epoch_results
+            if not epoch_results:
+                return
+            if rwalk_sampler is not None:
+                completed = tuple(
+                    (result.attempt.n_accepted, float(result.proposal_scale))
+                    for result in epoch_results
+                    if result.attempt.draw is not None
+                    and result.attempt.n_completed == rwalk_sampler.walks
+                    and result.proposal_scale is not None
+                )
+                rwalk_sampler.record_completed_epoch(completed)
+            if srwalk_sampler is not None:
+                completed = tuple(
+                    (result.attempt.n_accepted, float(result.proposal_scale))
+                    for result in epoch_results
+                    if result.attempt.draw is not None
+                    and result.attempt.n_completed == srwalk_sampler.n_steps
+                    and result.proposal_scale is not None
+                )
+                srwalk_sampler.record_completed_epoch(completed)
+            epoch_results = []
+
+        def refill_queue(
+            *,
+            worst: int,
+            threshold: float,
+            threshold_tie: float,
+        ) -> str | None:
+            nonlocal epoch_results, next_job_id, n_proposals
+            queue_size = config.parallel.queue_size
+            if queue_size is None:  # pragma: no cover - post-init resolves it
+                raise RuntimeError("parallel queue_size was not resolved")
+            capacity = min(
+                queue_size,
+                config.max_iterations - niter,
+            )
+            if self.adaptive_proposal_controller is not None:
+                until_refit = config.proposal_update_interval - (
+                    niter % config.proposal_update_interval
+                )
+                capacity = min(capacity, until_refit)
+            if capacity <= 0:
+                return "max_iterations"
+
+            exact_calls = _fixed_job_call_requirement(
+                config=config,
+                rwalk_sampler=rwalk_sampler,
+                srwalk_sampler=srwalk_sampler,
+            )
+            job_call_budget: int | None = None
+            if config.max_likelihood_calls is not None:
+                remaining = (
+                    config.max_likelihood_calls - evaluator.n_likelihood_calls
+                )
+                if remaining <= 0:
+                    return "max_likelihood_calls"
+                if exact_calls is not None:
+                    if remaining < exact_calls:
+                        return "max_likelihood_calls"
+                    capacity = min(capacity, remaining // exact_calls)
+                    job_call_budget = exact_calls
+                elif remaining >= config.max_proposals_per_replacement:
+                    capacity = min(
+                        capacity,
+                        remaining // config.max_proposals_per_replacement,
+                    )
+                    job_call_budget = config.max_proposals_per_replacement
+                else:
+                    capacity = 1
+                    job_call_budget = remaining
+            if capacity <= 0:
+                return "max_likelihood_calls"
+
+            snapshot = prepare_replacement_snapshot(
+                threshold=threshold,
+                threshold_tie_breaker=threshold_tie,
+                worst=worst,
+                live_theta=live_theta,
+                live_log_likelihood=live_log_likelihood,
+                live_log_prior=live_log_prior,
+                live_log_q0=live_log_q0,
+                live_log_psi0=live_log_psi0,
+                live_tie_breakers=live_tie_breakers,
+                proposal_revision=active_proposal_revision(),
+            )
+            jobs: list[ReplacementJob] = []
+            if job_seed_sequence is None:  # pragma: no cover - queued mode only
+                raise RuntimeError("replacement job seed sequence is unavailable")
+            child_sequences = job_seed_sequence.spawn(capacity)
+            for child_sequence in child_sequences:
+                entropy = tuple(
+                    int(value) for value in child_sequence.generate_state(4)
+                )
+                jobs.append(
+                    ReplacementJob(
+                        job_id=next_job_id,
+                        snapshot=snapshot,
+                        config=config,
+                        model=worker_model,
+                        importance_morph=self.importance_morph,
+                        proposal_morph=self.proposal_morph,
+                        seed_entropy=entropy,
+                        max_likelihood_calls=job_call_budget,
+                        deadline=deadline,
+                        rwalk_scale=(
+                            None if rwalk_sampler is None else rwalk_sampler.scale
+                        ),
+                        srwalk_scale=(
+                            None if srwalk_sampler is None else srwalk_sampler.scale
+                        ),
+                    )
+                )
+                next_job_id += 1
+
+            queue_accounting.queue_refills += 1
+            queue_accounting.queue_jobs_submitted += len(jobs)
+            if executor is None:
+                results = [build_replacement(job) for job in jobs]
+            else:
+                results = list(executor.map(build_replacement, jobs, chunksize=1))
+            for result in results:
+                queue_accounting.queue_jobs_completed += 1
+                queue_accounting.prefetch_likelihood_calls += (
+                    result.counts.likelihood_calls
+                )
+                _add_evaluation_counts(evaluator, result.counts)
+                n_proposals += result.attempt.n_proposed
+            queue.extend(results)
+            epoch_results = results
+            return None
+
         while not termination_reason:
             if niter >= config.max_iterations:
                 termination_reason = "max_iterations"
@@ -478,6 +751,7 @@ class MINSampler:
             if (
                 config.max_likelihood_calls is not None
                 and evaluator.n_likelihood_calls >= config.max_likelihood_calls
+                and (compatibility_mode or len(queue) == 0)
             ):
                 termination_reason = "max_likelihood_calls"
                 break
@@ -485,7 +759,7 @@ class MINSampler:
                 termination_reason = "max_wall_time"
                 break
 
-            if self.adaptive_proposal_controller is not None:
+            if self.adaptive_proposal_controller is not None and len(queue) == 0:
                 self.proposal_morph = self.adaptive_proposal_controller.update_if_due(
                     iteration=niter,
                     live_theta=live_theta,
@@ -501,28 +775,106 @@ class MINSampler:
             threshold = float(live_log_psi0[worst])
             threshold_tie = float(live_tie_breakers[worst])
             try:
-                attempt = _draw_replacement(
-                    config=config,
-                    evaluator=evaluator,
-                    proposal_morph=self.proposal_morph,
-                    live_theta=live_theta,
-                    live_log_likelihood=live_log_likelihood,
-                    live_log_prior=live_log_prior,
-                    live_log_q0=live_log_q0,
-                    live_log_psi0=live_log_psi0,
-                    live_tie_breakers=live_tie_breakers,
-                    worst=worst,
-                    threshold=threshold,
-                    threshold_tie_breaker=threshold_tie,
-                    rng=self.rng,
-                    deadline=deadline,
-                    rwalk_sampler=rwalk_sampler,
-                    srwalk_sampler=srwalk_sampler,
-                )
+                if compatibility_mode:
+                    before = _evaluation_counts(evaluator)
+                    queue_accounting.queue_refills += 1
+                    queue_accounting.queue_jobs_submitted += 1
+                    attempt = _draw_replacement(
+                        config=config,
+                        evaluator=evaluator,
+                        proposal_morph=self.proposal_morph,
+                        live_theta=live_theta,
+                        live_log_likelihood=live_log_likelihood,
+                        live_log_prior=live_log_prior,
+                        live_log_q0=live_log_q0,
+                        live_log_psi0=live_log_psi0,
+                        live_tie_breakers=live_tie_breakers,
+                        worst=worst,
+                        threshold=threshold,
+                        threshold_tie_breaker=threshold_tie,
+                        rng=self.rng,
+                        deadline=deadline,
+                        rwalk_sampler=rwalk_sampler,
+                        srwalk_sampler=srwalk_sampler,
+                    )
+                    counts = _evaluation_delta(
+                        before,
+                        _evaluation_counts(evaluator),
+                    )
+                    queue_accounting.queue_jobs_completed += 1
+                    queue_accounting.prefetch_likelihood_calls += (
+                        counts.likelihood_calls
+                    )
+                    n_proposals += attempt.n_proposed
+                    if attempt.draw is not None:
+                        queue_accounting.queue_candidates_consumed += 1
+                        queue_accounting.used_prefetch_likelihood_calls += (
+                            counts.likelihood_calls
+                        )
+                else:
+                    selected: ReplacementResult | None = None
+                    last_failure: str | None = None
+                    while selected is None and not termination_reason:
+                        if len(queue) == 0:
+                            refill_failure = refill_queue(
+                                worst=worst,
+                                threshold=threshold,
+                                threshold_tie=threshold_tie,
+                            )
+                            if refill_failure is not None:
+                                termination_reason = refill_failure
+                                break
+                            if deadline is not None and time.monotonic() >= deadline:
+                                termination_reason = "max_wall_time"
+                                break
+                        while len(queue):
+                            candidate = queue.popleft()
+                            valid, rejection = queue.is_current_and_valid(
+                                candidate,
+                                threshold=threshold,
+                                threshold_tie_breaker=threshold_tie,
+                                proposal_revision=active_proposal_revision(),
+                                tie_policy=config.tie_policy,
+                            )
+                            if rejection == "failed":
+                                last_failure = (
+                                    candidate.attempt.reason
+                                    or "constrained_sampling_exhausted"
+                                )
+                            elif rejection == "proposal_revision":
+                                if candidate.attempt.draw is not None:
+                                    queue_accounting.queue_candidates_invalidated += 1
+                            elif rejection == "stale":
+                                queue_accounting.queue_candidates_stale += 1
+                            elif valid:
+                                selected = candidate
+                                queue_accounting.queue_candidates_consumed += 1
+                                queue_accounting.used_prefetch_likelihood_calls += (
+                                    candidate.counts.likelihood_calls
+                                )
+                            if len(queue) == 0:
+                                finish_proposal_epoch()
+                            if selected is not None:
+                                break
+                        if selected is None and len(queue) == 0 and last_failure:
+                            termination_reason = last_failure
+                    if selected is None:
+                        if termination_reason:
+                            if (
+                                termination_reason
+                                == "constrained_sampling_exhausted"
+                                and config.tie_policy == "strict"
+                                and np.count_nonzero(live_log_psi0 == threshold) > 1
+                            ):
+                                termination_reason = "plateau_stall"
+                            break
+                        raise RuntimeError("replacement queue produced no candidate")
+                    attempt = selected.attempt
             except BaseException:
+                if executor is not None:
+                    executor.shutdown(wait=True, cancel_futures=True)
                 progress_reporter.close("error")
                 raise
-            n_proposals += attempt.n_proposed
             if attempt.draw is None:
                 termination_reason = attempt.reason or "constrained_sampling_exhausted"
                 if (
@@ -548,12 +900,16 @@ class MINSampler:
             dead_log_delta_x.append(log_delta_x)
             dead_log_weights.append(log_weight)
 
-            live_theta[worst] = point.theta
-            live_log_likelihood[worst] = point.log_likelihood
-            live_log_prior[worst] = point.log_prior
-            live_log_q0[worst] = point.log_q0
-            live_log_psi0[worst] = point.log_psi0
-            live_tie_breakers[worst] = point.tie_breaker
+            _commit_replacement(
+                worst=worst,
+                point=point,
+                live_theta=live_theta,
+                live_log_likelihood=live_log_likelihood,
+                live_log_prior=live_log_prior,
+                live_log_q0=live_log_q0,
+                live_log_psi0=live_log_psi0,
+                live_tie_breakers=live_tie_breakers,
+            )
             niter = iteration
 
             logz_dead, dead_log_psi_mean = update_log_weighted_mean(
@@ -696,6 +1052,24 @@ class MINSampler:
                     "mcmc_accepted": history_mcmc_accepted[-1],
                     "mcmc_moved": history_mcmc_moved[-1],
                     "mcmc_completed": history_mcmc_completed[-1],
+                    "queue_jobs_submitted": queue_accounting.queue_jobs_submitted,
+                    "queue_jobs_completed": queue_accounting.queue_jobs_completed,
+                    "queue_candidates_consumed": (
+                        queue_accounting.queue_candidates_consumed
+                    ),
+                    "queue_candidates_stale": (
+                        queue_accounting.queue_candidates_stale
+                    ),
+                    "queue_candidates_invalidated": (
+                        queue_accounting.queue_candidates_invalidated
+                    ),
+                    "queue_refills": queue_accounting.queue_refills,
+                    "prefetch_likelihood_calls": (
+                        queue_accounting.prefetch_likelihood_calls
+                    ),
+                    "used_prefetch_likelihood_calls": (
+                        queue_accounting.used_prefetch_likelihood_calls
+                    ),
                 }
                 if config.dlogz is not None:
                     progress_info["stopping_tolerance"] = config.dlogz
@@ -711,6 +1085,13 @@ class MINSampler:
                     else "stopping_criteria"
                 )
 
+        discarded_results = queue.clear()
+        queue_accounting.queue_candidates_invalidated += sum(
+            result.attempt.draw is not None for result in discarded_results
+        )
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        queue_diagnostics = queue_accounting.freeze()
         progress_reporter.close(termination_reason)
         final_log_x = -niter / self.n_live
         quadrature = finalize_quadrature(
@@ -834,5 +1215,6 @@ class MINSampler:
                 ("zero_likelihood", evaluator.zero_likelihood),
             ),
             warnings=tuple(warnings),
+            queue_diagnostics=queue_diagnostics,
             ensemble_move_history=ensemble_move_history,
         )

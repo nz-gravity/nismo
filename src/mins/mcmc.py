@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import time
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -99,14 +100,24 @@ class RWalkSampler:
 
     def record_completed_walk(self, *, accept: int, scale: float) -> None:
         """Record one complete chain and tune before the next replacement."""
-        self._calls_since_bound_update += self.walks
-        self.tune(
-            {
-                "accept": accept,
-                "reject": self.walks - accept,
-                "scale": scale,
-            }
-        )
+        self.record_completed_epoch(((accept, scale),))
+
+    def record_completed_epoch(
+        self,
+        walks: Iterable[tuple[int, float]],
+    ) -> None:
+        """Aggregate walks constructed under one scale, then tune once."""
+        completed = tuple(walks)
+        for index, (accept, scale) in enumerate(completed):
+            self._calls_since_bound_update += self.walks
+            self.tune(
+                {
+                    "accept": accept,
+                    "reject": self.walks - accept,
+                    "scale": scale,
+                },
+                update=index == len(completed) - 1,
+            )
 
     @property
     def citations(self) -> list[tuple[str, str]]:
@@ -149,13 +160,23 @@ class SRWalkSampler:
 
     def record_completed_walk(self, *, accept: int, scale: float) -> None:
         """Tune the scale after one complete fixed-geometry chain."""
-        self.tune(
-            {
-                "accept": accept,
-                "reject": self.n_steps - accept,
-                "scale": scale,
-            }
-        )
+        self.record_completed_epoch(((accept, scale),))
+
+    def record_completed_epoch(
+        self,
+        walks: Iterable[tuple[int, float]],
+    ) -> None:
+        """Aggregate walks constructed under one scale, then tune once."""
+        completed = tuple(walks)
+        for index, (accept, scale) in enumerate(completed):
+            self.tune(
+                {
+                    "accept": accept,
+                    "reject": self.n_steps - accept,
+                    "scale": scale,
+                },
+                update=index == len(completed) - 1,
+            )
 
 
 def _improve_covariance(

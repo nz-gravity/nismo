@@ -6,6 +6,7 @@ from .config import (
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
     MINSConfig,
+    ParallelSettings,
     ProposalScheme,
     RWalkSettings,
     SRWalkSettings,
@@ -22,6 +23,12 @@ from .exceptions import (
 from .model import CallableModel, Model
 from .plotting import plot_nested_progress
 from .proposals import MorphMetadata, MorphProposal, Proposal, RefittableProposal
+from .replacement import (
+    EvaluationCounts,
+    QueueDiagnostics,
+    ReplacementResult,
+    ReplacementSnapshot,
+)
 from .results import EnsembleMoveHistory, MINSResult, ProposalUpdateRecord, RunHistory
 from .sampler import MINSampler
 from .stopping import StoppingCriterionConfig, StoppingPolicy
@@ -33,6 +40,7 @@ __all__ = [
     "EnsembleMoveName",
     "EnsembleMoveWeights",
     "EnsembleRWalkSettings",
+    "EvaluationCounts",
     "InvalidModelOutput",
     "InvalidProposalOutput",
     "MINSConfig",
@@ -44,12 +52,16 @@ __all__ = [
     "MorphMetadata",
     "MorphProposal",
     "NumericalInvariantError",
+    "ParallelSettings",
     "Proposal",
     "ProposalScheme",
     "ProposalSupportError",
     "ProposalUpdateRecord",
+    "QueueDiagnostics",
     "RWalkSettings",
     "RefittableProposal",
+    "ReplacementResult",
+    "ReplacementSnapshot",
     "RunHistory",
     "SRWalkSettings",
     "StoppingCriterionConfig",

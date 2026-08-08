@@ -120,6 +120,7 @@ walk:
 from mins import (
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
+    ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
 )
@@ -159,6 +160,20 @@ ensemble_sampler = MINSampler(
     rng=42,
 )
 ```
+
+To prefetch whole constrained walks using persistent worker processes, pass
+the same settings to any sampler above:
+
+```python
+parallel=ParallelSettings(n_workers=8, queue_size=8)
+```
+
+Nested-sampling commits remain serial and candidates are consumed in FIFO
+submission order after revalidation. Start with `queue_size=n_workers`, then
+inspect `result.queue_diagnostics`; a large stale fraction means the queue is
+too deep for the rate at which the constraint advances. Worker callables must
+be pickleable, so define likelihood and prior functions at module scope rather
+than as lambdas when `n_workers > 1`.
 
 The discarded live point defines the constraint, is not used as a chain start,
 and does not enter the ensemble covariance. `EnsembleRWalkSettings()` uses the

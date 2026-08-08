@@ -44,6 +44,7 @@ from mins import (
     EnsembleRWalkSettings,
     MINSampler,
     MorphProposal,
+    ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
     StoppingCriterionConfig,
@@ -185,6 +186,32 @@ Dynesty's top-level default. It starts at scale 1 and adapts toward `facc`.
 `s-rwalk` uses a Gaussian proposal transformed by a regularized covariance of
 the current survivors. Its default scale is `2.38 / sqrt(model.ndim)` and is
 adapted toward `facc` after every completed replacement.
+
+Complete replacements can be prefetched concurrently while dead-point and
+quadrature updates remain serial:
+
+```python
+parallel_sampler = MINSampler(
+    model=model,
+    importance_morph=importance_morph,
+    proposal_scheme="rwalk",
+    rwalk_settings=RWalkSettings(walks=50),
+    n_live=200,
+    rng=42,
+    parallel=ParallelSettings(n_workers=8, queue_size=8),
+)
+```
+
+The pool persists for the run. Results are consumed in submission-order FIFO,
+not completion order, and every candidate is checked against the current
+constraint before one live point is replaced. The defaults
+`n_workers=1, queue_size=1` retain the original random-number stream and serial
+behavior. Larger queues can waste work as the threshold advances; inspect
+`result.queue_diagnostics.queue_efficiency`, `compute_efficiency`, stale and
+wasted-call counts when tuning them. Multiprocess models and proposals must be
+pickleable (in particular, use module-level functions rather than lambdas).
+An existing `CallableModel.scalar_likelihood_map` is disabled inside workers
+to prevent nested process pools.
 
 The terminal live display reports iteration, live-point count, likelihood
 calls, proposal efficiency, `logZ`, theoretical `logZerr`, and the stopping

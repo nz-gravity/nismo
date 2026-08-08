@@ -26,6 +26,27 @@ ProposalScheme = Literal[
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class ParallelSettings:
+    """Replacement-prefetch worker and queue settings.
+
+    ``queue_size`` defaults to ``n_workers``.  The all-serial compatibility
+    path is therefore represented by the default ``(1, 1)`` settings.
+    """
+
+    n_workers: int = 1
+    queue_size: int | None = None
+
+    def __post_init__(self) -> None:
+        workers = _positive_integer(self.n_workers, name="parallel n_workers")
+        queue_size = workers if self.queue_size is None else _positive_integer(
+            self.queue_size,
+            name="parallel queue_size",
+        )
+        object.__setattr__(self, "n_workers", workers)
+        object.__setattr__(self, "queue_size", queue_size)
+
+
 def _positive_integer(value: object, *, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
         raise ConfigurationError(f"{name} must be a positive integer")
@@ -291,6 +312,8 @@ class MINSConfig:
         Gaussian-covariance random-walk Metropolis settings.
     ensemble_rwalk_settings
         Split-ensemble Metropolis--Hastings mixture settings.
+    parallel
+        Complete-replacement worker count and deterministic prefetch depth.
     max_iterations
         Maximum number of completed dead-point replacements.
     max_proposals_per_replacement
@@ -314,6 +337,7 @@ class MINSConfig:
     ensemble_rwalk_settings: EnsembleRWalkSettings = field(
         default_factory=EnsembleRWalkSettings
     )
+    parallel: ParallelSettings = field(default_factory=ParallelSettings)
     max_iterations: int = 10_000
     max_proposals_per_replacement: int = 100_000
     max_likelihood_calls: int | None = None
@@ -381,6 +405,8 @@ class MINSConfig:
             raise ConfigurationError(
                 "ensemble_rwalk_settings must be an EnsembleRWalkSettings"
             )
+        if not isinstance(self.parallel, ParallelSettings):
+            raise ConfigurationError("parallel must be a ParallelSettings")
         if (
             self.proposal_scheme == "en-rwalk"
             and self.ensemble_rwalk_settings.n_walkers > self.n_live - 1

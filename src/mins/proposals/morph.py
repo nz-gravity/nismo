@@ -82,10 +82,14 @@ class MorphProposal:
             [backend.logpdf(point) for point in probe],
             dtype=float,
         )
-        for mode, value in (
+        batch_modes: tuple[
+            tuple[Literal["native", "transposed"], NDArray[np.float64]],
+            ...,
+        ] = (
             ("native", probe),
             ("transposed", probe.T),
-        ):
+        )
+        for mode, value in batch_modes:
             try:
                 result = np.asarray(backend.logpdf(value), dtype=float)
             except (TypeError, ValueError):

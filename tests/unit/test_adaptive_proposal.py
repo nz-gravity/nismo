@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from mins import CallableModel, MINSampler
+from mins import CallableModel, MINSampler, ParallelSettings
 from mins.adaptive import AdaptiveMorphController
 
 pytestmark = pytest.mark.unit
@@ -197,3 +197,45 @@ def test_run_stopping_at_update_boundary_does_not_refit() -> None:
     assert result.niter == 3
     assert result.proposal_updates == ()
     assert state.inputs == []
+
+
+def test_serial_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
+    state = RefitState()
+    importance = TrackingNormalProposal(state=state)
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 1.5) ** 2,
+        log_prior_fn=importance.log_prob,
+    )
+    result = MINSampler(
+        model=model,
+        importance_morph=importance,
+        proposal_scheme="adaptive_morph",
+        proposal_update_interval=5,
+        n_live=10,
+        rng=17,
+        proposal_batch_size=8,
+        parallel=ParallelSettings(n_workers=1, queue_size=4),
+    ).run(
+        dlogz=1.0e-8,
+        max_iterations=12,
+        max_proposals_per_replacement=10_000,
+    )
+
+    assert [record.iteration for record in result.proposal_updates] == [5, 10]
+    assert result.history.proposal_revision.tolist() == [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+    ]
+    assert result.queue_diagnostics.queue_candidates_invalidated == 0
