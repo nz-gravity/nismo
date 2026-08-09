@@ -5,14 +5,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from mins import (
+from nismo import (
     ConfigurationError,
-    MINSConfig,
+    NISMOConfig,
     NumericalInvariantError,
     StoppingCriterionConfig,
     StoppingPolicy,
 )
-from mins.stopping import (
+from nismo.stopping import (
     StoppingMetrics,
     calculate_remaining_dlogz,
     calculate_stopping_metrics,
@@ -457,12 +457,12 @@ def test_criterion_validation_rejects_invalid_tolerances(
 def test_config_rejects_live_ess_target_above_n_live() -> None:
     policy = StoppingPolicy(criteria=(StoppingCriterionConfig("live_ess", 11.0),))
     with pytest.raises(ConfigurationError, match=r"live_ess.*n_live"):
-        MINSConfig(n_live=10, stopping=policy)
+        NISMOConfig(n_live=10, stopping=policy)
 
 
 def test_config_resolves_legacy_and_rejects_ambiguous_stopping() -> None:
-    default = MINSConfig(n_live=10)
-    explicit = MINSConfig(n_live=10, dlogz=2.0)
+    default = NISMOConfig(n_live=10)
+    explicit = NISMOConfig(n_live=10, dlogz=2.0)
     policy = StoppingPolicy(criteria=(StoppingCriterionConfig("logzerr", 0.1),))
     assert default.dlogz == 1.0e-3
     assert default.stopping is not None
@@ -474,19 +474,19 @@ def test_config_resolves_legacy_and_rejects_ambiguous_stopping() -> None:
     remaining_fraction = StoppingPolicy(
         criteria=(StoppingCriterionConfig("remaining_fraction", 0.02),)
     )
-    assert MINSConfig(n_live=10, stopping=remaining_fraction).stopping == (
+    assert NISMOConfig(n_live=10, stopping=remaining_fraction).stopping == (
         remaining_fraction
     )
     with pytest.raises(ConfigurationError, match="dlogz and stopping"):
-        MINSConfig(n_live=10, dlogz=0.1, stopping=policy)
+        NISMOConfig(n_live=10, dlogz=0.1, stopping=policy)
     with pytest.raises(ConfigurationError, match="dlogz"):
-        MINSConfig(n_live=10, dlogz=True)
+        NISMOConfig(n_live=10, dlogz=True)
 
 
 @pytest.mark.parametrize("dlogz", [0.0, -0.1, np.nan, np.inf, True])
 def test_config_rejects_invalid_dlogz(dlogz: Any) -> None:
     with pytest.raises(ConfigurationError, match="positive finite"):
-        MINSConfig(n_live=10, dlogz=dlogz)
+        NISMOConfig(n_live=10, dlogz=dlogz)
 
 
 def test_inconsistent_nonfinite_metric_state_raises_typed_error() -> None:

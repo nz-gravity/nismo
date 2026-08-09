@@ -1,6 +1,6 @@
 # Architecture
 
-MINS keeps the transformed statistical calculation separate from MorphZ and
+NISMO keeps the transformed statistical calculation separate from MorphZ and
 from presentation concerns.
 
 ```text

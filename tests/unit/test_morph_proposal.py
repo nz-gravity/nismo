@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mins import MorphProposal
-from mins.exceptions import InvalidProposalOutput
+from nismo import MorphProposal
+from nismo.exceptions import InvalidProposalOutput
 
 pytestmark = pytest.mark.unit
 

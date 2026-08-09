@@ -1,1 +1,1 @@
-"""MINS tests."""
+"""NISMO tests."""

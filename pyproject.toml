@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mins"
+name = "nismo"
 version = "0.1.0.dev3"
 description = "Experimental Morph-assisted nested importance sampling"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "MINS contributors" },
+  { name = "NISMO contributors" },
 ]
 keywords = [
   "Bayesian inference",
@@ -56,9 +56,9 @@ dev = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/ApokryphaV1/MINS/tree/main/docs"
-Issues = "https://github.com/ApokryphaV1/MINS/issues"
-Repository = "https://github.com/ApokryphaV1/MINS"
+Documentation = "https://github.com/nz-gravity/nismo/tree/main/docs"
+Issues = "https://github.com/nz-gravity/nismo/issues"
+Repository = "https://github.com/nz-gravity/nismo"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -82,7 +82,6 @@ target-version = "py310"
 line-length = 88
 src = ["src", "tests"]
 extend-exclude = [
-  "MINS_PHASE_2_MORPH_NESTED_SAMPLING.md",
   "examples/*.ipynb",
   "examples/g_shell.py",
 ]
@@ -95,7 +94,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
 python_version = "3.10"
-packages = ["mins"]
+packages = ["nismo"]
 strict = true
 warn_unreachable = true
 
@@ -105,7 +104,7 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true
-source = ["mins"]
+source = ["nismo"]
 
 [tool.coverage.report]
 show_missing = true

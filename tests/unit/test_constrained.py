@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 from tests.helpers import UniformProposal
 
-from mins import (
+from nismo import (
     CallableModel,
     InvalidModelOutput,
     InvalidProposalOutput,
     ProposalSupportError,
 )
-from mins.constrained import BatchEvaluator, draw_constrained
+from nismo.constrained import BatchEvaluator, draw_constrained
 
 pytestmark = pytest.mark.unit
 

@@ -7,18 +7,18 @@ import pytest
 from numpy.typing import NDArray
 from tests.helpers import StandardNormalProposal
 
-from mins import (
+from nismo import (
     CallableModel,
     ConfigurationError,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
-    MINSConfig,
+    NISMOConfig,
     NumericalInvariantError,
     RWalkSettings,
     SRWalkSettings,
 )
-from mins.constrained import BatchEvaluator, passes_constraint
-from mins.mcmc import (
+from nismo.constrained import BatchEvaluator, passes_constraint
+from nismo.mcmc import (
     RWalkSampler,
     SRWalkSampler,
     _propose_gaussian_move,
@@ -45,7 +45,7 @@ pytestmark = pytest.mark.unit
 )
 def test_all_proposal_schemes_are_configured(proposal_scheme: str) -> None:
     settings = EnsembleRWalkSettings(n_walkers=4)
-    config = MINSConfig(
+    config = NISMOConfig(
         n_live=5,
         proposal_scheme=proposal_scheme,  # type: ignore[arg-type]
         ensemble_rwalk_settings=settings,
@@ -174,7 +174,7 @@ def test_rwalk_bound_cache_refreshes_after_walks_times_nlive_calls(
         calls += 1
         return np.ones((points.shape[1], points.shape[1]))
 
-    monkeypatch.setattr("mins.mcmc.bounding_ellipsoid_axes", counted_axes)
+    monkeypatch.setattr("nismo.mcmc.bounding_ellipsoid_axes", counted_axes)
     sampler = RWalkSampler(settings=RWalkSettings(walks=2), ndim=1)
     live = np.array([[0.0], [1.0], [2.0]])
     sampler.axes_for(live)
@@ -269,7 +269,7 @@ def test_ensemble_settings_reject_invalid_mixture_values(
 
 def test_ensemble_size_is_checked_against_live_survivors() -> None:
     with pytest.raises(ConfigurationError, match="n_live"):
-        MINSConfig(
+        NISMOConfig(
             n_live=8,
             proposal_scheme="en-rwalk",
             ensemble_rwalk_settings=EnsembleRWalkSettings(n_walkers=8),
@@ -564,7 +564,7 @@ def test_rwalk_starts_uniformly_from_an_eligible_survivor_and_can_stay_put(
         assert points.shape == (6, 1)
         return np.ones((1, 1))
 
-    monkeypatch.setattr("mins.mcmc.bounding_ellipsoid_axes", counted_bound)
+    monkeypatch.setattr("nismo.mcmc.bounding_ellipsoid_axes", counted_bound)
     sampler = RWalkSampler(settings=RWalkSettings(walks=7), ndim=1)
     attempt = draw_rwalk_constrained(
         evaluator=evaluator,
@@ -636,7 +636,7 @@ def test_srwalk_uses_frozen_survivor_covariance_and_can_stay_put(
         assert jitter == 1.0e-8
         return np.ones((1, 1))
 
-    monkeypatch.setattr("mins.mcmc.covariance_factor", counted_covariance)
+    monkeypatch.setattr("nismo.mcmc.covariance_factor", counted_covariance)
     sampler = SRWalkSampler(
         settings=SRWalkSettings(
             n_steps=7,
@@ -732,7 +732,7 @@ def test_rejected_mh_proposal_retains_every_cached_field(
     log_psi0 = np.array(log_likelihood, copy=True)
     ties = np.array([0.1, 0.2, 0.3])
     monkeypatch.setattr(
-        "mins.mcmc.bounding_ellipsoid_axes",
+        "nismo.mcmc.bounding_ellipsoid_axes",
         lambda *args: np.ones((1, 1)),
     )
     sampler = RWalkSampler(settings=RWalkSettings(walks=2), ndim=1)
@@ -792,7 +792,7 @@ def test_accepted_mh_proposal_updates_every_cached_field(
     log_psi0 = np.array(log_likelihood, copy=True)
     ties = np.array([0.1, 0.2, 0.3])
     monkeypatch.setattr(
-        "mins.mcmc.bounding_ellipsoid_axes",
+        "nismo.mcmc.bounding_ellipsoid_axes",
         lambda *args: np.full((1, 1), 10.0),
     )
     sampler = RWalkSampler(settings=RWalkSettings(walks=2), ndim=1)
@@ -914,7 +914,7 @@ def test_ensemble_covariance_is_lazy_frozen_and_excludes_discarded_point(
         assert jitter == 1.0e-8
         return np.ones((1, 1))
 
-    monkeypatch.setattr("mins.mcmc.covariance_factor", counted_covariance)
+    monkeypatch.setattr("nismo.mcmc.covariance_factor", counted_covariance)
     attempt = draw_ensemble_rwalk_constrained(
         evaluator=evaluator,
         live_theta=theta,
@@ -979,9 +979,9 @@ def test_ensemble_gaussian_scale_is_resolved_once_and_frozen(
             rng=rng,
         )
 
-    monkeypatch.setattr("mins.mcmc._propose_gaussian_move", captured_gaussian)
+    monkeypatch.setattr("nismo.mcmc._propose_gaussian_move", captured_gaussian)
     monkeypatch.setattr(
-        "mins.mcmc.covariance_factor",
+        "nismo.mcmc.covariance_factor",
         lambda *args, **kwargs: np.ones((1, 1)),
     )
     attempt = draw_ensemble_rwalk_constrained(
@@ -1024,7 +1024,7 @@ def test_ensemble_selects_one_move_per_half_update(
         selections += 1
         return "stretch"
 
-    monkeypatch.setattr("mins.mcmc._select_ensemble_move", counted_selection)
+    monkeypatch.setattr("nismo.mcmc._select_ensemble_move", counted_selection)
     attempt = draw_ensemble_rwalk_constrained(
         evaluator=evaluator,
         live_theta=theta,
@@ -1069,7 +1069,7 @@ def test_gaussian_ensemble_acceptance_updates_all_cached_fields(
     zeros = np.zeros(6)
     ties = np.linspace(0.1, 0.6, 6)
     monkeypatch.setattr(
-        "mins.mcmc.covariance_factor",
+        "nismo.mcmc.covariance_factor",
         lambda *args, **kwargs: np.ones((1, 1)),
     )
     attempt = draw_ensemble_rwalk_constrained(
@@ -1113,7 +1113,7 @@ def test_gaussian_ensemble_rejection_retains_all_cached_fields(
         _all_rejected_problem()
     )
     monkeypatch.setattr(
-        "mins.mcmc.covariance_factor",
+        "nismo.mcmc.covariance_factor",
         lambda *args, **kwargs: np.ones((1, 1)),
     )
     attempt = draw_ensemble_rwalk_constrained(

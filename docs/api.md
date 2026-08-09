@@ -1,6 +1,6 @@
 # Phase 2 API
 
-MINS uses natural logarithms throughout and expects point batches with shape
+NISMO uses natural logarithms throughout and expects point batches with shape
 `(n, ndim)`.
 
 ## Model
@@ -39,7 +39,7 @@ with ProcessPoolExecutor(max_workers=4) as pool:
         vectorized=False,
         scalar_likelihood_map=pool.map,
     )
-    sampler = MINSampler(
+    sampler = NISMOSampler(
         model=model,
         importance_morph=importance_morph,
         n_live=nlive,
@@ -94,10 +94,10 @@ deep-copied version of the original bandwidth and grouping configuration. It
 does not mutate the importance object. Automatic `morph_type` grouping is
 recomputed; file-backed grouping is retained in memory.
 
-## MINSampler
+## NISMOSampler
 
 ```python
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="fixed_morph",
@@ -126,7 +126,7 @@ current mean-live remaining-evidence estimate:
 `StoppingCriterionConfig` and `StoppingPolicy` values:
 
 ```python
-from mins import StoppingCriterionConfig, StoppingPolicy
+from nismo import StoppingCriterionConfig, StoppingPolicy
 
 n_live = sampler.n_live
 stopping = StoppingPolicy(
@@ -161,14 +161,14 @@ The proposal scheme is one of `"fixed_morph"`, `"adaptive_morph"`, `"rwalk"`,
 public:
 
 ```python
-from mins import (
+from nismo import (
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
     RWalkSettings,
     SRWalkSettings,
 )
 
-rwalk = MINSampler(
+rwalk = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",
@@ -181,7 +181,7 @@ rwalk = MINSampler(
     rng=42,
 )
 
-statistical_rwalk = MINSampler(
+statistical_rwalk = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -203,7 +203,7 @@ statistical_rwalk = MINSampler(
     rng=42,
 )
 
-ensemble = MINSampler(
+ensemble = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="en-rwalk",
@@ -220,8 +220,8 @@ ensemble = MINSampler(
 )
 ```
 
-`MINSConfig` stores all three settings objects, and
-`MINSampler.from_posterior_samples` accepts them as well. Ensemble walker
+`NISMOConfig` stores all three settings objects, and
+`NISMOSampler.from_posterior_samples` accepts them as well. Ensemble walker
 count must be even, at least four, and no greater than `n_live - 1`.
 
 `proposal_scheme="fixed_morph"` uses the importance Morph for constrained
@@ -329,7 +329,7 @@ retains its cumulative nested-replacement-efficiency meaning.
 
 ## Result
 
-`MINSResult` is frozen and its arrays are read-only. Key scalar fields are:
+`NISMOResult` is frozen and its arrays are read-only. Key scalar fields are:
 
 - `logz`, `logzerr`, `information`;
 - `success`, `termination_reason`;
@@ -429,7 +429,7 @@ retries at the next configured interval.
 
 ## Diagnostics and plots
 
-`mins.diagnostics.summarize(result)` reports posterior ESS, proposal acceptance,
+`nismo.diagnostics.summarize(result)` reports posterior ESS, proposal acceptance,
 maximum proposals per replacement, threshold monotonicity, the separate
 conservative max-live remainder, and the final values of every stopping
 diagnostic and streak, plus replacement-queue and compute efficiency.

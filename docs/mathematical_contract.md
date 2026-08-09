@@ -59,7 +59,7 @@ The optional `randomized_plateau` policy augments every point with independent
 \(u\sim U(0,1)\) and applies lexicographic ordering to
 \((\log\Psi_0,u)\).
 
-With `proposal_scheme="adaptive_morph"`, MINS initially proposes from \(q_0\).
+With `proposal_scheme="adaptive_morph"`, NISMO initially proposes from \(q_0\).
 After every 25 completed iterations by default, it fits a new proposal Morph
 \(r_c\) to a copy of all current live points using the original Morph fit
 configuration. Candidates then come from \(r_c\), while their `log_q0`,

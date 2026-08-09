@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from mins import CallableModel, MINSampler, ParallelSettings
-from mins.adaptive import AdaptiveMorphController
+from nismo import CallableModel, NISMOSampler, ParallelSettings
+from nismo.adaptive import AdaptiveMorphController
 
 pytestmark = pytest.mark.unit
 
@@ -106,7 +106,7 @@ def test_adaptive_sampler_keeps_q0_fixed_and_refits_from_live_rows_only() -> Non
         log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 1.5) ** 2,
         log_prior_fn=importance.log_prob,
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=importance,
         proposal_scheme="adaptive_morph",
@@ -160,7 +160,7 @@ def test_adaptive_sampler_continues_after_refit_failure() -> None:
         log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 0.5) ** 2,
         log_prior_fn=importance.log_prob,
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=importance,
         proposal_scheme="adaptive_morph",
@@ -185,7 +185,7 @@ def test_run_stopping_at_update_boundary_does_not_refit() -> None:
         log_likelihood_fn=lambda x: -0.5 * x[:, 0] ** 2,
         log_prior_fn=importance.log_prob,
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=importance,
         proposal_scheme="adaptive_morph",
@@ -208,7 +208,7 @@ def test_serial_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
         log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 1.5) ** 2,
         log_prior_fn=importance.log_prob,
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=importance,
         proposal_scheme="adaptive_morph",

@@ -1,6 +1,6 @@
 # Stopping criteria
 
-MINS uses a single remaining-log-evidence-increment criterion by default:
+NISMO uses a single remaining-log-evidence-increment criterion by default:
 
 ```python
 result = sampler.run(dlogz=1e-3)
@@ -13,7 +13,7 @@ retains `termination_reason="remaining_evidence"`. Omitting `dlogz` also uses
 The multi-criterion API is opt-in:
 
 ```python
-from mins import StoppingCriterionConfig, StoppingPolicy
+from nismo import StoppingCriterionConfig, StoppingPolicy
 
 n_live = sampler.n_live
 stopping = StoppingPolicy(
@@ -83,7 +83,7 @@ similar only for a small live remainder and remain independently selectable.
 ### Live effective sample size and mean RSE
 
 For transformed live likelihoods
-\(\Psi_j=L_j\pi_j/q_j\), MINS calculates Kish ESS in log space:
+\(\Psi_j=L_j\pi_j/q_j\), NISMO calculates Kish ESS in log space:
 
 \[
 N_{\rm eff,live}
@@ -91,7 +91,7 @@ N_{\rm eff,live}
 \]
 
 `live_ess >= tolerance` is an optional criterion. The threshold must lie
-between one and `n_live`. MINS also stores
+between one and `n_live`. NISMO also stores
 
 \[
 \operatorname{RSE}_{\rm live}
@@ -196,6 +196,6 @@ An explicit policy that passes terminates with
 constrained-sampling exhaustion remain independent failures with
 `success=False`, even if some—but not all—enabled conditions have passed.
 
-Stopping does not alter the evidence estimator. MINS continues to use
+Stopping does not alter the evidence estimator. NISMO continues to use
 deterministic \(X_i=\exp(-i/N)\), the existing dead-point weights, and the same
 final live-point correction.

@@ -7,9 +7,9 @@ import pytest
 from numpy.typing import NDArray
 from tests.helpers import StandardNormalProposal
 
-from mins import (
+from nismo import (
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
@@ -65,7 +65,7 @@ def test_parallel_replacement_jobs_are_reproducible_and_serially_consumed(
     settings: dict[str, object],
 ) -> None:
     results = [
-        MINSampler(
+        NISMOSampler(
             model=ConstantNormalModel(),
             importance_morph=StandardNormalProposal(),
             proposal_scheme=proposal_scheme,  # type: ignore[arg-type]
@@ -105,7 +105,7 @@ def test_parallel_replacement_jobs_are_reproducible_and_serially_consumed(
 
 
 def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
-    result = MINSampler(
+    result = NISMOSampler(
         model=ConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
         proposal_scheme="rwalk",
@@ -136,12 +136,12 @@ def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:
         "rng": 144,
         "tie_policy": "randomized_plateau",
     }
-    default = MINSampler(**kwargs).run(  # type: ignore[arg-type]
+    default = NISMOSampler(**kwargs).run(  # type: ignore[arg-type]
         dlogz=0.5,
         max_iterations=100,
         max_proposals_per_replacement=20,
     )
-    explicit = MINSampler(
+    explicit = NISMOSampler(
         **kwargs,  # type: ignore[arg-type]
         parallel=ParallelSettings(n_workers=1, queue_size=1),
     ).run(
@@ -160,7 +160,7 @@ def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:
 
 
 def test_parallel_call_reservations_never_overshoot_hard_limit() -> None:
-    result = MINSampler(
+    result = NISMOSampler(
         model=ConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
         proposal_scheme="rwalk",
@@ -182,7 +182,7 @@ def test_parallel_call_reservations_never_overshoot_hard_limit() -> None:
 
 
 def test_parallel_deadline_discards_prefetch_without_committing_late_result() -> None:
-    result = MINSampler(
+    result = NISMOSampler(
         model=DelayedConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
         proposal_scheme="rwalk",

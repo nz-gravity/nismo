@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mins import (
+from nismo import (
     ConfigurationError,
     EvaluationCounts,
     ParallelSettings,
@@ -11,8 +11,8 @@ from mins import (
     ReplacementResult,
     ReplacementSnapshot,
 )
-from mins.constrained import ConstrainedAttempt, ConstrainedDraw, EvaluatedPoint
-from mins.replacement import ReplacementQueue
+from nismo.constrained import ConstrainedAttempt, ConstrainedDraw, EvaluatedPoint
+from nismo.replacement import ReplacementQueue
 
 pytestmark = pytest.mark.unit
 
@@ -121,4 +121,3 @@ def test_queue_diagnostics_report_exact_efficiencies() -> None:
     )
     assert diagnostics.queue_efficiency == pytest.approx(0.6)
     assert diagnostics.compute_efficiency == pytest.approx(0.6)
-

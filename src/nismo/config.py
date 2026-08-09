@@ -39,9 +39,13 @@ class ParallelSettings:
 
     def __post_init__(self) -> None:
         workers = _positive_integer(self.n_workers, name="parallel n_workers")
-        queue_size = workers if self.queue_size is None else _positive_integer(
-            self.queue_size,
-            name="parallel queue_size",
+        queue_size = (
+            workers
+            if self.queue_size is None
+            else _positive_integer(
+                self.queue_size,
+                name="parallel queue_size",
+            )
         )
         object.__setattr__(self, "n_workers", workers)
         object.__setattr__(self, "queue_size", queue_size)
@@ -286,8 +290,8 @@ def _validate_dlogz(value: object) -> float:
 
 
 @dataclass(frozen=True, slots=True)
-class MINSConfig:
-    """Numerical and resource settings for one MINS run.
+class NISMOConfig:
+    """Numerical and resource settings for one NISMO run.
 
     Parameters
     ----------

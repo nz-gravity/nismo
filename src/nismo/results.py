@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.special import logsumexp
 
-from .config import MINSConfig
+from .config import NISMOConfig
 from .proposals import MorphMetadata
 from .quadrature import live_log_contributions
 from .replacement import QueueDiagnostics
@@ -159,8 +159,8 @@ class EnsembleMoveHistory:
 
 
 @dataclass(frozen=True, slots=True)
-class MINSResult:
-    """Complete immutable output of a fixed-importance MINS run.
+class NISMOResult:
+    """Complete immutable output of a fixed-importance NISMO run.
 
     Arrays contain enough cached information to recompute the evidence,
     posterior weights, and information without reevaluating the model.
@@ -192,7 +192,7 @@ class MINSResult:
     final_live_tie_breakers: NDArray[np.float64]
     log_posterior_weights: NDArray[np.float64]
     history: RunHistory
-    config: MINSConfig
+    config: NISMOConfig
     rng_bit_generator: str
     rng_state_initial: str
     rng_state_final: str
@@ -345,7 +345,7 @@ class MINSResult:
 
         Notes
         -----
-        Weighted samples are the primary MINS posterior representation.
+        Weighted samples are the primary NISMO posterior representation.
         Resampling is convenient for tools that require equal weights but adds
         Monte Carlo variation.
         """

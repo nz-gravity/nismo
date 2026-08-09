@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from mins import CallableModel
+from nismo import CallableModel
 
 
 def main() -> None:

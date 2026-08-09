@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.integrate import quad
 
-from mins import CallableModel
+from nismo import CallableModel
 
 
 @dataclass(frozen=True, slots=True)

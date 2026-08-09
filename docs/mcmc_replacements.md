@@ -4,7 +4,7 @@ For standalone equation-by-equation audits, see the current standard
 [`rwalk` implementation](rwalk_implementation.tex) and the separate
 [`s-rwalk` implementation](s_rwalk_implementation.tex).
 
-MINS always defines its pseudo-likelihood with one fixed importance density:
+NISMO always defines its pseudo-likelihood with one fixed importance density:
 
 \[
 \log\Psi_0(\theta)
@@ -79,16 +79,16 @@ The discarded point defines the threshold but is excluded from ensemble
 initialization and covariance estimation. Geometry remains fixed during each
 complete replacement and is built lazily for `en-rwalk`; a stretch-only
 replacement never computes it. Parameters are proposed in their full physical
-space. MINS does not clip to a prior boundary or redraw until a point enters the
+space. NISMO does not clip to a prior boundary or redraw until a point enters the
 prior, because either operation would change the proposal kernel. A proposal
 with zero prior or likelihood is rejected through the ordinary constraint.
 
 ## Standard random walk
 
 ```python
-from mins import MINSampler, RWalkSettings
+from nismo import NISMOSampler, RWalkSettings
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",
@@ -117,20 +117,20 @@ s_{k+1}=s_k\exp\!\left(\frac{f_k-f_0}{D f_0}\right),
 
 where \(f_0\) is `facc`. The configured value is clamped to
 `[1 / walks, 1]`. Omitting `walks` uses `D + 20`; explicit values have a
-minimum of two. MINS attempts exactly `walks` transitions and returns the
+minimum of two. NISMO attempts exactly `walks` transitions and returns the
 actual final state. If every proposal is rejected, that final state is the
 valid starting survivor; movement is never forced.
 
-Dynesty can refresh dimensions beyond `ncdim` from a unit-cube prior. MINS
+Dynesty can refresh dimensions beyond `ncdim` from a unit-cube prior. NISMO
 supports arbitrary correlated importance Morphs without such a transform, so
 `ncdim` must be omitted or equal to the complete model dimension.
 
 ## Statistically specified Gaussian random walk
 
 ```python
-from mins import MINSampler, SRWalkSettings
+from nismo import NISMOSampler, SRWalkSettings
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -161,9 +161,9 @@ flooring.
 ## Ensemble move mixture
 
 ```python
-from mins import EnsembleMoveWeights, EnsembleRWalkSettings, MINSampler
+from nismo import EnsembleMoveWeights, EnsembleRWalkSettings, NISMOSampler
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="en-rwalk",
@@ -296,7 +296,7 @@ proposal. A successful replacement therefore costs:
 - `s-rwalk`: `n_steps` (default 25);
 - `en-rwalk`: `n_walkers * n_sweeps`.
 
-MINS checks obvious proposal and likelihood-call incompatibilities before
+NISMO checks obvious proposal and likelihood-call incompatibilities before
 starting. It checks the deadline before every scalar transition or ensemble
 half-batch. An interrupted evolution fails the replacement and leaves the
 worst live point untouched; it never returns a shortened chain.
@@ -341,7 +341,7 @@ and cost across seeds.
 
 The `rwalk` implementation is adapted from Dynesty 3.1.0. Its runtime
 `citations` entry remains Skilling (2006); source attribution and Dynesty's MIT
-license are distributed with MINS.
+license are distributed with NISMO.
 
 Low MH acceptance, low constraint-pass fractions, or many unchanged walkers
 can indicate poor mixing. Do not repair those symptoms by returning only moved

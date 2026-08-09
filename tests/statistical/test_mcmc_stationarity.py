@@ -8,16 +8,16 @@ from numpy.typing import NDArray
 from scipy.special import ndtr, ndtri
 from tests.helpers import StandardNormalProposal
 
-from mins import (
+from nismo import (
     CallableModel,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     RWalkSettings,
     SRWalkSettings,
 )
-from mins.constrained import BatchEvaluator, ConstrainedAttempt
-from mins.mcmc import (
+from nismo.constrained import BatchEvaluator, ConstrainedAttempt
+from nismo.mcmc import (
     RWalkSampler,
     SRWalkSampler,
     draw_ensemble_rwalk_constrained,
@@ -381,7 +381,7 @@ def test_end_to_end_gaussian_evidence_agrees_across_replacement_schemes() -> Non
     for proposal_scheme, settings in schemes:
         logz = []
         for seed in (31, 32, 33):
-            result = MINSampler(
+            result = NISMOSampler(
                 model=model,
                 importance_morph=proposal,
                 proposal_scheme=proposal_scheme,  # type: ignore[arg-type]

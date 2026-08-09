@@ -1,6 +1,6 @@
 # Contributing
 
-MINS is currently a pre-alpha research project.
+NISMO is currently a pre-alpha research project.
 
 1. Create a focused branch.
 2. Install `.[dev]`.

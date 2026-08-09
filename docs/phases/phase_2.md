@@ -12,7 +12,7 @@ pseudo-prior. Stop before defensive, adaptive, or Phase 3 work.
 - Authoritative Phase 2 Markdown mathematical and implementation specification.
 - Installed editable MorphZ 0.4.1 development package.
 
-No MINS prototype, experimental notebooks, group JSON, posterior data, or
+No NISMO prototype, experimental notebooks, group JSON, posterior data, or
 stored benchmark summaries were present.
 
 ## Mathematical decisions and assumptions
@@ -35,7 +35,7 @@ final-live corrections. See `docs/mathematical_contract.md`.
 - `quadrature.py`: pure log-space evidence calculations.
 - `sampler.py`: serial state machine and typed termination.
 - `results.py`: immutable recomputable results and histories.
-- `MINSResult.resample_equal`: dependency-free equal-weight posterior draws.
+- `NISMOResult.resample_equal`: dependency-free equal-weight posterior draws.
 - `progress.py`: optional tqdm bar and callback snapshots.
 - `diagnostics.py`, `plotting.py`: result-only health checks and figures.
 - `benchmarks/`, `tests/`, `examples/`, and documentation pages.
@@ -43,20 +43,20 @@ final-live corrections. See `docs/mathematical_contract.md`.
 ## Commands run
 
 ```bash
-MPLCONFIGDIR=/tmp/mins-mpl PYTHONPATH=src python -m pytest \
+MPLCONFIGDIR=/tmp/nismo-mpl PYTHONPATH=src python -m pytest \
   tests/unit tests/integration -m "not slow"
-MPLCONFIGDIR=/tmp/mins-mpl PYTHONPATH=src python -m pytest \
+MPLCONFIGDIR=/tmp/nismo-mpl PYTHONPATH=src python -m pytest \
   tests/statistical -m "statistical and not slow"
-MPLCONFIGDIR=/tmp/mins-mpl PYTHONPATH=src python -m pytest \
+MPLCONFIGDIR=/tmp/nismo-mpl PYTHONPATH=src python -m pytest \
   tests/statistical/test_benchmarks.py::test_grouped_morph_gaussian_shell_regression \
   -m slow -vv
 python -m ruff format --check .
 python -m ruff check .
-python -m mypy src/mins
-python -m pytest --cov=mins --cov-report=term-missing
+python -m mypy src/nismo
+python -m pytest --cov=nismo --cov-report=term-missing
 python -m build --no-isolation
 python -m twine check dist/*
-MPLCONFIGDIR=/tmp/mins-mpl PYTHONPATH=src python \
+MPLCONFIGDIR=/tmp/nismo-mpl PYTHONPATH=src python \
   examples/phase2_gaussian.py --output-dir docs/plots
 ```
 
@@ -113,8 +113,8 @@ adapted by reliable row-wise public calls; no Morph density is reimplemented.
 
 ```bash
 python -m pip install -e ".[dev]"
-MPLCONFIGDIR=/tmp/mins-mpl python -m pytest
-MPLCONFIGDIR=/tmp/mins-mpl python examples/phase2_gaussian.py \
+MPLCONFIGDIR=/tmp/nismo-mpl python -m pytest
+MPLCONFIGDIR=/tmp/nismo-mpl python examples/phase2_gaussian.py \
   --output-dir docs/plots
 ```
 

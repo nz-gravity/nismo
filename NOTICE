@@ -1,4 +1,4 @@
-MINS includes code adapted from dynesty 3.1.0:
+NISMO includes code adapted from dynesty 3.1.0:
 https://github.com/joshspeagle/dynesty/tree/v3.1.0
 
 The adapted random-walk controller, uniform-ball proposal, and single-

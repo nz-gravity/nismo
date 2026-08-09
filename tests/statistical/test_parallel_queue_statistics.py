@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from mins import (
+from nismo import (
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
@@ -77,7 +77,7 @@ def test_parallel_and_singleton_queues_have_equivalent_gaussian_aggregates(
     ):
         estimates = []
         for seed in (311, 312, 313):
-            result = MINSampler(
+            result = NISMOSampler(
                 model=ShiftedGaussianModel(),
                 importance_morph=StandardNormalProposal(),
                 proposal_scheme=proposal_scheme,  # type: ignore[arg-type]

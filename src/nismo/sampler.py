@@ -16,7 +16,7 @@ from numpy.typing import NDArray
 from .adaptive import AdaptiveMorphController
 from .config import (
     EnsembleRWalkSettings,
-    MINSConfig,
+    NISMOConfig,
     ParallelSettings,
     ProposalScheme,
     RWalkSettings,
@@ -57,7 +57,7 @@ from .replacement import (
     build_replacement,
     prepare_replacement_snapshot,
 )
-from .results import EnsembleMoveHistory, MINSResult, RunHistory
+from .results import EnsembleMoveHistory, NISMOResult, RunHistory
 from .stopping import (
     SCIENTIFIC_TERMINATION_REASONS,
     StoppingPolicy,
@@ -78,7 +78,7 @@ def _as_generator(
 
 def _draw_replacement(
     *,
-    config: MINSConfig,
+    config: NISMOConfig,
     evaluator: BatchEvaluator,
     proposal_morph: Proposal,
     live_theta: NDArray[np.float64],
@@ -212,7 +212,7 @@ def _worker_model(model: Any, *, n_workers: int) -> Any:
 
 def _fixed_job_call_requirement(
     *,
-    config: MINSConfig,
+    config: NISMOConfig,
     rwalk_sampler: RWalkSampler | None,
     srwalk_sampler: SRWalkSampler | None,
 ) -> int | None:
@@ -251,7 +251,7 @@ def _commit_replacement(
     live_tie_breakers[worst] = point.tie_breaker
 
 
-class MINSampler:
+class NISMOSampler:
     """Fixed-importance sampler with selectable Morph proposal schemes.
 
     Parameters
@@ -260,7 +260,7 @@ class MINSampler:
         Batch model with a normalized ``log_prior``.
     importance_morph
         Fixed normalized importance distribution. Phase 2 normally uses
-        :class:`~mins.MorphProposal`.
+        :class:`~nismo.MorphProposal`.
     proposal_scheme
         ``"fixed_morph"`` draws from the importance Morph.
         ``"adaptive_morph"`` periodically refits a separate proposal Morph.
@@ -336,7 +336,7 @@ class MINSampler:
             else ensemble_rwalk_settings
         )
         self.parallel = ParallelSettings() if parallel is None else parallel
-        MINSConfig(
+        NISMOConfig(
             n_live=n_live,
             proposal_batch_size=proposal_batch_size,
             proposal_scheme=proposal_scheme,
@@ -376,7 +376,7 @@ class MINSampler:
         srwalk_settings: SRWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
         parallel: ParallelSettings | None = None,
-    ) -> MINSampler:
+    ) -> NISMOSampler:
         """Fit MorphZ once and construct a sampler.
 
         ``morph_config`` is passed as keyword arguments to
@@ -412,7 +412,7 @@ class MINSampler:
         max_likelihood_calls: int | None = None,
         max_wall_time: float | None = None,
         progress: ProgressOption = False,
-    ) -> MINSResult:
+    ) -> NISMOResult:
         """Run deterministic-shrinkage nested importance sampling.
 
         Parameters
@@ -438,7 +438,7 @@ class MINSampler:
 
         Returns
         -------
-        MINSResult
+        NISMOResult
             A complete result. Hard limits yield ``success=False`` and preserve
             the valid partial quadrature state.
 
@@ -454,7 +454,7 @@ class MINSampler:
             If ``progress=True`` is requested without the optional tqdm
             dependency.
         """
-        config = MINSConfig(
+        config = NISMOConfig(
             n_live=self.n_live,
             dlogz=dlogz,
             stopping=stopping,
@@ -473,7 +473,7 @@ class MINSampler:
         )
         stopping_policy = config.stopping
         if stopping_policy is None:  # pragma: no cover - config always resolves it
-            raise RuntimeError("MINSConfig did not resolve a stopping policy")
+            raise RuntimeError("NISMOConfig did not resolve a stopping policy")
         progress_reporter = create_progress_reporter(
             progress,
             max_iterations=config.max_iterations,
@@ -664,9 +664,7 @@ class MINSampler:
             )
             job_call_budget: int | None = None
             if config.max_likelihood_calls is not None:
-                remaining = (
-                    config.max_likelihood_calls - evaluator.n_likelihood_calls
-                )
+                remaining = config.max_likelihood_calls - evaluator.n_likelihood_calls
                 if remaining <= 0:
                     return "max_likelihood_calls"
                 if exact_calls is not None:
@@ -861,8 +859,7 @@ class MINSampler:
                     if selected is None:
                         if termination_reason:
                             if (
-                                termination_reason
-                                == "constrained_sampling_exhausted"
+                                termination_reason == "constrained_sampling_exhausted"
                                 and config.tie_policy == "strict"
                                 and np.count_nonzero(live_log_psi0 == threshold) > 1
                             ):
@@ -1057,9 +1054,7 @@ class MINSampler:
                     "queue_candidates_consumed": (
                         queue_accounting.queue_candidates_consumed
                     ),
-                    "queue_candidates_stale": (
-                        queue_accounting.queue_candidates_stale
-                    ),
+                    "queue_candidates_stale": (queue_accounting.queue_candidates_stale),
                     "queue_candidates_invalidated": (
                         queue_accounting.queue_candidates_invalidated
                     ),
@@ -1177,7 +1172,7 @@ class MINSampler:
         )
         final_state = copy.deepcopy(self.rng.bit_generator.state)
         ndim = self.model.ndim
-        return MINSResult(
+        return NISMOResult(
             logz=quadrature.logz,
             logzerr=quadrature.logzerr,
             information=quadrature.information,

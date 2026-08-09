@@ -1,58 +1,58 @@
 #!/usr/bin/env python3
 """
-Repeated twin-Gaussian-shell benchmark: Dynesty ``rwalk`` versus MINS.
+Repeated twin-Gaussian-shell benchmark: Dynesty ``rwalk`` versus NISMO.
 
-The benchmark follows the model and MINS setup in:
+The benchmark follows the model and NISMO setup in:
     examples/gaussian shell.ipynb
-    https://github.com/EL-MZ/MINS/blob/main/examples/gaussian%20shell.ipynb
+    https://github.com/nz-gravity/nismo/blob/main/examples/gaussian%20shell.ipynb
 
 For each n_live value, the script:
 
 1. Runs one pilot Dynesty ``rwalk`` calculation.
 2. Converts that run's weighted samples to equal-weight posterior samples.
 3. Fits one fixed MorphZ proposal from the thinned posterior, as in the notebook.
-4. Runs N independent Dynesty calculations and N independent MINS calculations.
+4. Runs N independent Dynesty calculations and N independent NISMO calculations.
 5. Saves every run immediately to CSV, writes aggregate statistics, and creates
    a two-panel publication-style figure:
       top:    log(Z) versus n_live
       bottom: likelihood-call count versus n_live
 
 The pilot Dynesty run is also Dynesty repeat 0, so exactly N Dynesty results are
-reported for each n_live. All N MINS repeats at a given n_live use the same
+reported for each n_live. All N NISMO repeats at a given n_live use the same
 fixed Morph proposal, matching the "one NS run supplies the posterior samples"
 design of the reference figure.
 
 Likelihood-call accounting
 --------------------------
-MINS requires posterior samples to construct its fixed Morph proposal. The raw
+NISMO requires posterior samples to construct its fixed Morph proposal. The raw
 CSV therefore stores three call-count definitions:
 
 * ncall_direct:
     Calls made by the sampler itself. This is the default plotted quantity.
 * ncall_amortized:
-    MINS calls plus 1/N of the pilot Dynesty training cost.
+    NISMO calls plus 1/N of the pilot Dynesty training cost.
 * ncall_cold_start:
-    MINS calls plus the complete pilot Dynesty training cost.
+    NISMO calls plus the complete pilot Dynesty training cost.
 
 Choose the plotted definition with ``--ncall-metric``.
 
 Example
 -------
-Install from the current MINS repository and install Dynesty:
+Install from the current NISMO repository and install Dynesty:
 
     pip install dynesty matplotlib scipy tqdm
-    pip install "mins[morph,plot,progress] @ git+https://github.com/EL-MZ/MINS.git@main"
+    pip install "nismo[morph,plot,progress] @ git+https://github.com/nz-gravity/nismo.git@main"
 
 Run a small test:
 
-    python benchmark_dynesty_rwalk_vs_mins.py \
+    python benchmark_dynesty_rwalk_vs_nismo.py \
         --nlive 50 100 \
         --repeats 2 \
         --progress
 
 Run the full paper-style grid:
 
-    python benchmark_dynesty_rwalk_vs_mins.py \
+    python benchmark_dynesty_rwalk_vs_nismo.py \
         --nlive 50 100 200 300 400 500 \
         --repeats 10 \
         --ncall-metric direct \
@@ -60,7 +60,7 @@ Run the full paper-style grid:
 
 Regenerate the summaries and figure without rerunning samplers:
 
-    python benchmark_dynesty_rwalk_vs_mins.py \
+    python benchmark_dynesty_rwalk_vs_nismo.py \
         --output-dir gaussian_shell_benchmark \
         --plot-only
 """
@@ -116,11 +116,11 @@ RAW_FIELDS = [
 
 METHOD_ORDER = {
     "dynesty_rwalk": 0,
-    "mins_fixed_morph": 1,
-    "mins_adaptive_morph": 1,
-    "mins_rwalk": 1,
-    "mins_s-rwalk": 1,
-    "mins_en-rwalk": 1,
+    "nismo_fixed_morph": 1,
+    "nismo_adaptive_morph": 1,
+    "nismo_rwalk": 1,
+    "nismo_s-rwalk": 1,
+    "nismo_en-rwalk": 1,
 }
 
 TRUE_LOGZ_BY_DIMENSION = {
@@ -518,8 +518,8 @@ def parse_kde_bandwidth(value: str) -> str | float:
         return value
 
 
-def build_mins_model(model: TwinGaussianShell) -> Any:
-    from mins import CallableModel
+def build_nismo_model(model: TwinGaussianShell) -> Any:
+    from nismo import CallableModel
 
     return CallableModel(
         ndim=model.ndim,
@@ -532,19 +532,19 @@ def build_mins_model(model: TwinGaussianShell) -> Any:
 
 def fit_morph_proposal(
     *,
-    mins_model: Any,
+    nismo_model: Any,
     training_samples: np.ndarray,
     morph_type: str,
     kde_bw: str | float,
     min_tc: float | None,
     top_k_greedy: int,
 ) -> tuple[Any, float]:
-    from mins import MorphProposal
+    from nismo import MorphProposal
 
     start = time.perf_counter()
     proposal = MorphProposal.fit(
         training_samples,
-        param_names=mins_model.parameter_names,
+        param_names=nismo_model.parameter_names,
         morph_type=morph_type,
         kde_bw=kde_bw,
         min_tc=min_tc,
@@ -554,9 +554,9 @@ def fit_morph_proposal(
     return proposal, fit_time_s
 
 
-def run_mins(
+def run_nismo(
     *,
-    mins_model: Any,
+    nismo_model: Any,
     importance_proposal: Any,
     nlive: int,
     seed: int,
@@ -578,23 +578,25 @@ def run_mins(
     max_wall_time: float | None,
     progress: bool,
 ) -> dict[str, Any]:
-    """Run one MINS calculation with the already fitted fixed importance q0."""
-    from mins import (
+    """Run one NISMO calculation with the already fitted fixed importance q0."""
+    from nismo import (
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
-        MINSampler,
+        NISMOSampler,
+        ParallelSettings,
         RWalkSettings,
         SRWalkSettings,
     )
 
     sampler_kwargs: dict[str, Any] = {
-        "model": mins_model,
+        "model": nismo_model,
         "importance_morph": importance_proposal,
         "proposal_scheme": proposal_scheme,
         "n_live": nlive,
         "rng": seed,
         "proposal_batch_size": proposal_batch_size,
         "tie_policy": tie_policy,
+        "parallel": ParallelSettings(n_workers=8),
     }
 
     if proposal_scheme == "en-rwalk":
@@ -617,7 +619,7 @@ def run_mins(
             n_steps=srwalk_steps,
         )
 
-    sampler = MINSampler(**sampler_kwargs)
+    sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
     result = sampler.run(
         dlogz=dlogz,
@@ -936,8 +938,8 @@ def plot_summary(
     axis_logz.legend(loc="best", frameon=True)
     fig.align_ylabels((axis_logz, axis_calls))
 
-    png_path = output_dir / "dynesty_rwalk_vs_mins.png"
-    pdf_path = output_dir / "dynesty_rwalk_vs_mins.pdf"
+    png_path = output_dir / "dynesty_rwalk_vs_nismo.png"
+    pdf_path = output_dir / "dynesty_rwalk_vs_nismo.pdf"
     fig.savefig(png_path, dpi=220, bbox_inches="tight")
     fig.savefig(pdf_path, bbox_inches="tight")
     if show:
@@ -1085,13 +1087,13 @@ def save_config(
             "scipy": package_version("scipy"),
             "matplotlib": package_version("matplotlib"),
             "dynesty": package_version("dynesty"),
-            "mins": package_version("mins"),
+            "nismo": package_version("nismo"),
             "morphZ": package_version("morphZ"),
         },
         "design": {
             "proposal_training": (
                 "One pilot Dynesty rwalk posterior per nlive; the pilot is also "
-                "Dynesty repeat 0. All MINS repeats at that nlive share the fixed "
+                "Dynesty repeat 0. All NISMO repeats at that nlive share the fixed "
                 "Morph proposal fitted from the thinned equal-weight posterior."
             ),
             "logz_error_bars": "Empirical sample standard deviation across repeats.",
@@ -1180,7 +1182,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--training-thin must be at least one")
     if args.max_training_samples < 0:
         raise ValueError("--max-training-samples cannot be negative")
-    if args.mins_proposal_scheme == "en-rwalk" and any(
+    if args.nismo_proposal_scheme == "en-rwalk" and any(
         value < args.ensemble_walkers for value in args.nlive
     ):
         raise ValueError("each nlive must be at least --ensemble-walkers for en-rwalk")
@@ -1189,7 +1191,7 @@ def validate_args(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Repeated Dynesty rwalk versus MINS benchmark on the "
+            "Repeated Dynesty rwalk versus NISMO benchmark on the "
             "twin Gaussian-shell problem."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1264,26 +1266,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--mins-proposal-scheme",
+        "--nismo-proposal-scheme",
         choices=("fixed_morph", "adaptive_morph", "rwalk", "s-rwalk", "en-rwalk"),
         default="en-rwalk",
-        help="MINS constrained replacement scheme.",
+        help="NISMO constrained replacement scheme.",
     )
     parser.add_argument("--proposal-batch-size", type=int, default=64)
     parser.add_argument(
         "--tie-policy",
         choices=("strict", "randomized_plateau"),
         default="strict",
-        help="MINS constrained-ordering policy.",
+        help="NISMO constrained-ordering policy.",
     )
-    parser.add_argument("--ensemble-walkers", type=int, default=16)
-    parser.add_argument("--ensemble-sweeps", type=int, default=4)
+    parser.add_argument("--ensemble-walkers", type=int, default=8)
+    parser.add_argument("--ensemble-sweeps", type=int, default=2)
     parser.add_argument("--ensemble-de-weight", type=float, default=0.60)
     parser.add_argument("--ensemble-stretch-weight", type=float, default=0.25)
     parser.add_argument("--ensemble-gaussian-weight", type=float, default=0.15)
-    parser.add_argument("--mins-rwalk-walks", type=int, default=None)
-    parser.add_argument("--mins-rwalk-facc", type=float, default=0.5)
-    parser.add_argument("--mins-srwalk-steps", type=int, default=25)
+    parser.add_argument("--nismo-rwalk-walks", type=int, default=None)
+    parser.add_argument("--nismo-rwalk-facc", type=float, default=0.5)
+    parser.add_argument("--nismo-srwalk-steps", type=int, default=25)
     parser.add_argument("--max-iterations", type=int, default=10_000)
     parser.add_argument(
         "--max-proposals-per-replacement",
@@ -1401,14 +1403,14 @@ def main() -> int:
         shell_radius=args.shell_radius,
         center_offset=args.center_offset,
     )
-    mins_model = build_mins_model(model)
-    mins_method = f"mins_{args.mins_proposal_scheme}"
-    mins_label = f"MINS ({args.mins_proposal_scheme})"
+    nismo_model = build_nismo_model(model)
+    nismo_method = f"nismo_{args.nismo_proposal_scheme}"
+    nismo_label = f"NISMO ({args.nismo_proposal_scheme})"
 
     print(f"Twin Gaussian shell: ndim={args.ndim}, reference logZ={true_logz:.3f}")
     print(
         f"Grid: nlive={args.nlive}, repeats={args.repeats}; "
-        f"MINS scheme={args.mins_proposal_scheme}"
+        f"NISMO scheme={args.nismo_proposal_scheme}"
     )
     print(f"Incremental results: {raw_path}")
 
@@ -1565,7 +1567,7 @@ def main() -> int:
                 print(f"  FAILED: {failure['message']}", file=sys.stderr)
 
         if posterior is None or cache_metadata is None:
-            reason = "MINS skipped because the pilot Dynesty posterior was unavailable"
+            reason = "NISMO skipped because the pilot Dynesty posterior was unavailable"
             print(reason, file=sys.stderr)
             for repeat in range(args.repeats):
                 seed = deterministic_seed(
@@ -1575,8 +1577,8 @@ def main() -> int:
                     repeat=repeat,
                 )
                 failure = make_failure_row(
-                    method=mins_method,
-                    method_label=mins_label,
+                    method=nismo_method,
+                    method_label=nismo_label,
                     nlive=nlive,
                     repeat=repeat,
                     seed=seed,
@@ -1609,7 +1611,7 @@ def main() -> int:
                 f"training samples..."
             )
             importance_proposal, proposal_fit_time_s = fit_morph_proposal(
-                mins_model=mins_model,
+                nismo_model=nismo_model,
                 training_samples=training_samples,
                 morph_type=args.morph_type,
                 kde_bw=parse_kde_bandwidth(args.kde_bw),
@@ -1630,8 +1632,8 @@ def main() -> int:
                     repeat=repeat,
                 )
                 failure = make_failure_row(
-                    method=mins_method,
-                    method_label=mins_label,
+                    method=nismo_method,
+                    method_label=nismo_label,
                     nlive=nlive,
                     repeat=repeat,
                     seed=seed,
@@ -1643,9 +1645,9 @@ def main() -> int:
             continue
 
         for repeat in range(args.repeats):
-            if args.resume and is_successful(rows, mins_method, nlive, repeat):
+            if args.resume and is_successful(rows, nismo_method, nlive, repeat):
                 print(
-                    f"[{mins_label}] nlive={nlive}, "
+                    f"[{nismo_label}] nlive={nlive}, "
                     f"repeat={repeat + 1}/{args.repeats}: cached"
                 )
                 continue
@@ -1657,16 +1659,16 @@ def main() -> int:
                 repeat=repeat,
             )
             print(
-                f"[{mins_label}] nlive={nlive}, "
+                f"[{nismo_label}] nlive={nlive}, "
                 f"repeat={repeat + 1}/{args.repeats}, seed={seed}"
             )
             try:
-                statistics = run_mins(
-                    mins_model=mins_model,
+                statistics = run_nismo(
+                    nismo_model=nismo_model,
                     importance_proposal=importance_proposal,
                     nlive=nlive,
                     seed=seed,
-                    proposal_scheme=args.mins_proposal_scheme,
+                    proposal_scheme=args.nismo_proposal_scheme,
                     dlogz=args.dlogz,
                     proposal_batch_size=args.proposal_batch_size,
                     tie_policy=args.tie_policy,
@@ -1675,9 +1677,9 @@ def main() -> int:
                     ensemble_de_weight=args.ensemble_de_weight,
                     ensemble_stretch_weight=args.ensemble_stretch_weight,
                     ensemble_gaussian_weight=args.ensemble_gaussian_weight,
-                    rwalk_walks=args.mins_rwalk_walks,
-                    rwalk_facc=args.mins_rwalk_facc,
-                    srwalk_steps=args.mins_srwalk_steps,
+                    rwalk_walks=args.nismo_rwalk_walks,
+                    rwalk_facc=args.nismo_rwalk_facc,
+                    srwalk_steps=args.nismo_srwalk_steps,
                     max_iterations=args.max_iterations,
                     max_proposals_per_replacement=(args.max_proposals_per_replacement),
                     max_likelihood_calls=args.max_likelihood_calls,
@@ -1688,8 +1690,8 @@ def main() -> int:
                 status = "success" if statistics["success"] else "incomplete"
                 warning_message = " | ".join(statistics["warnings"])
                 row = make_success_row(
-                    method=mins_method,
-                    method_label=mins_label,
+                    method=nismo_method,
+                    method_label=nismo_label,
                     nlive=nlive,
                     repeat=repeat,
                     seed=seed,
@@ -1726,8 +1728,8 @@ def main() -> int:
                     )
             except BaseException as error:
                 failure = make_failure_row(
-                    method=mins_method,
-                    method_label=mins_label,
+                    method=nismo_method,
+                    method_label=nismo_label,
                     nlive=nlive,
                     repeat=repeat,
                     seed=seed,

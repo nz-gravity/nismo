@@ -1212,7 +1212,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mins"
+name = "nismo"
 version = "0.1.0.dev3"
 source = { editable = "." }
 dependencies = [

@@ -1,29 +1,29 @@
-"""Typed exceptions raised by MINS."""
+"""Typed exceptions raised by NISMO."""
 
 
-class MINSError(Exception):
+class NISMOError(Exception):
     """Base class for package-specific errors."""
 
 
-class ConfigurationError(MINSError, ValueError):
+class ConfigurationError(NISMOError, ValueError):
     """Raised when sampler configuration is inconsistent or out of range."""
 
 
-class InvalidModelOutput(MINSError, ValueError):
+class InvalidModelOutput(NISMOError, ValueError):
     """Raised when a model returns invalid values or array shapes."""
 
 
-class InvalidProposalOutput(MINSError, ValueError):
+class InvalidProposalOutput(NISMOError, ValueError):
     """Raised when a proposal returns invalid values or array shapes."""
 
 
-class ProposalSupportError(MINSError):
+class ProposalSupportError(NISMOError):
     """Raised when Morph has no density where the target integrand is finite."""
 
 
-class MissingOptionalDependency(MINSError, ImportError):
+class MissingOptionalDependency(NISMOError, ImportError):
     """Raised when a requested optional integration is unavailable."""
 
 
-class NumericalInvariantError(MINSError, ArithmeticError):
+class NumericalInvariantError(NISMOError, ArithmeticError):
     """Raised when evidence arithmetic violates a required invariant."""

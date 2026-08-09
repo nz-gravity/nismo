@@ -13,31 +13,31 @@
 \usepackage{hyperref}
 \usepackage{fancyhdr}
 
-\definecolor{minsblue}{HTML}{164E63}
-\definecolor{minsgreen}{HTML}{166534}
-\definecolor{minsred}{HTML}{991B1B}
-\definecolor{minsgray}{HTML}{F3F4F6}
+\definecolor{nismoblue}{HTML}{164E63}
+\definecolor{nismogreen}{HTML}{166534}
+\definecolor{nismored}{HTML}{991B1B}
+\definecolor{nismogray}{HTML}{F3F4F6}
 \definecolor{codegray}{HTML}{4B5563}
 
 \hypersetup{
   colorlinks=true,
-  linkcolor=minsblue,
-  urlcolor=minsblue,
-  citecolor=minsblue,
-  pdftitle={The Statistically Specified s-rwalk Implementation in MINS},
-  pdfauthor={MINS contributors}
+  linkcolor=nismoblue,
+  urlcolor=nismoblue,
+  citecolor=nismoblue,
+  pdftitle={The Statistically Specified s-rwalk Implementation in NISMO},
+  pdfauthor={NISMO contributors}
 }
 
-\lstdefinestyle{minspython}{
+\lstdefinestyle{nismopython}{
   language=Python,
   basicstyle=\ttfamily\small,
-  keywordstyle=\color{minsblue}\bfseries,
-  commentstyle=\color{minsgreen},
-  stringstyle=\color{minsred},
+  keywordstyle=\color{nismoblue}\bfseries,
+  commentstyle=\color{nismogreen},
+  stringstyle=\color{nismored},
   numbers=left,
   numberstyle=\scriptsize\color{codegray},
   numbersep=8pt,
-  backgroundcolor=\color{minsgray},
+  backgroundcolor=\color{nismogray},
   frame=single,
   rulecolor=\color{gray!35},
   breaklines=true,
@@ -45,9 +45,9 @@
   columns=fullflexible,
   keepspaces=true
 }
-\lstset{style=minspython}
+\lstset{style=nismopython}
 
-\newcommand{\MINS}{\textsc{MINS}}
+\newcommand{\NISMO}{\textsc{NISMO}}
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
 \newcommand{\R}{\mathbb{R}}
 
@@ -58,13 +58,13 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\MINS{} statistically specified \code{s-rwalk}}
+\lhead{\NISMO{} statistically specified \code{s-rwalk}}
 \rhead{\thepage}
 \setlength{\headheight}{14pt}
 
 \title{\textbf{The Statistically Specified \code{s-rwalk}\\
-Implementation in \MINS}}
-\author{Implementation specification for \code{mins} version
+Implementation in \NISMO}}
+\author{Implementation specification for \code{nismo} version
 \code{0.1.0.dev3}}
 \date{\today}
 
@@ -74,7 +74,7 @@ Implementation in \MINS}}
 
 \begin{abstract}
 This document specifies the separate
-\code{proposal_scheme="s-rwalk"} kernel implemented by \MINS.  It follows the
+\code{proposal_scheme="s-rwalk"} kernel implemented by \NISMO.  It follows the
 actual Python execution path, including immutable configuration, eligible
 survivor selection, construction of a regularized survivor covariance,
 Gaussian random-walk proposals, the fixed-\(q_0\) Metropolis correction,
@@ -100,14 +100,14 @@ Gaussian-covariance Metropolis--Hastings replacement kernel.  It coexists with:
 The implementation is divided among four modules:
 
 \begin{itemize}
-  \item \code{src/mins/config.py}: public \code{SRWalkSettings} and the
+  \item \code{src/nismo/config.py}: public \code{SRWalkSettings} and the
         \code{"s-rwalk"} proposal-scheme literal;
-  \item \code{src/mins/mcmc.py}: \code{SRWalkSampler}, regularized covariance
+  \item \code{src/nismo/mcmc.py}: \code{SRWalkSampler}, regularized covariance
         factor, Gaussian proposal evolution, fixed-\(q_0\) acceptance, and
         scale tuning;
-  \item \code{src/mins/sampler.py}: controller lifetime, dispatch, resource
+  \item \code{src/nismo/sampler.py}: controller lifetime, dispatch, resource
         integration, live-point replacement, and per-iteration histories;
-  \item \code{src/mins/__init__.py}: public export of
+  \item \code{src/nismo/__init__.py}: public export of
         \code{SRWalkSettings}.
 \end{itemize}
 
@@ -118,7 +118,7 @@ NumPy \code{Generator} exclusively.
 
 Let \(L(\theta)\) be the likelihood, \(\pi(\theta)\) the normalized prior,
 and \(q_0(\theta)\) the fixed normalized importance density supplied as
-\code{importance_morph}.  \MINS{} defines
+\code{importance_morph}.  \NISMO{} defines
 
 \begin{equation}
   \log \Psi_0(\theta)
@@ -189,7 +189,7 @@ Field & Default or resolved value & Validation and meaning \\
 \end{center}
 
 The factor \(2.38/\sqrt{D}\) is a mixing heuristic, not part of the
-correctness of the target density.  Each call to \code{MINSampler.run()}
+correctness of the target density.  Each call to \code{NISMOSampler.run()}
 constructs a fresh \code{SRWalkSampler}; scale adaptation does not leak from
 one run call to the next.
 
@@ -366,7 +366,7 @@ Thus the parameter-space proposal is symmetric:
   \label{eq:symmetry}
 \end{equation}
 
-\MINS{} proposes in the full physical parameter space.  It does not clip,
+\NISMO{} proposes in the full physical parameter space.  It does not clip,
 reflect, wrap, or repeatedly redraw a point at prior boundaries.  A point with
 zero prior or likelihood simply fails the active pseudo-likelihood constraint.
 
@@ -508,7 +508,7 @@ Equation~\eqref{eq:tune} also applies when the user supplies \code{scale}.
 
 \section{Resource limits and failure semantics}
 
-Before choosing a start or constructing covariance geometry, \MINS{} rejects
+Before choosing a start or constructing covariance geometry, \NISMO{} rejects
 the complete replacement without new likelihood calls when:
 
 \begin{itemize}
@@ -648,7 +648,7 @@ frequent \code{mcmc_moved=0} outcomes.  Users should:
   \item compare against independent constrained rejection when practical.
 \end{itemize}
 
-\MINS{} does not force an accepted transition, discard unchanged outputs,
+\NISMO{} does not force an accepted transition, discard unchanged outputs,
 select the highest-likelihood visited state, or choose a state conditional on
 movement.  Each of those operations would alter the intended target.
 
@@ -657,9 +657,9 @@ movement.  Each of those operations would alter the intended target.
 Default geometry and scale initialization with a longer chain:
 
 \begin{lstlisting}
-from mins import MINSampler, SRWalkSettings
+from nismo import NISMOSampler, SRWalkSettings
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -680,7 +680,7 @@ result = sampler.run(
 Explicit initial scale and covariance regularization:
 
 \begin{lstlisting}
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -698,7 +698,7 @@ sampler = MINSampler(
 
 The second example starts at scale 0.75, then adapts that value after each
 completed replacement.  The hard proposal limit passed to
-\code{MINSampler.run()} must be at least \code{n_steps}.
+\code{NISMOSampler.run()} must be at least \code{n_steps}.
 
 Useful inspection:
 
@@ -735,7 +735,7 @@ does not preserve the tested truncated-normal distribution.
 The Gaussian random-walk Metropolis mechanism is the symmetric-proposal case
 of the Metropolis--Hastings algorithm.  The \(2.38/\sqrt{D}\) initialization
 is a conventional high-dimensional Gaussian-target scaling heuristic; it is
-not required for detailed balance.  The \MINS{} fixed-importance target and
+not required for detailed balance.  The \NISMO{} fixed-importance target and
 nested replacement context follow the project's mathematical contract.
 
 At runtime, \code{sampler.citations} for \code{"s-rwalk"} currently returns

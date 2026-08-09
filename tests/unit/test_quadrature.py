@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.special import logsumexp
 
-from mins.quadrature import (
+from nismo.quadrature import (
     dead_log_contribution,
     estimate_information,
     estimated_live_logz,

@@ -1,4 +1,4 @@
-"""Pure diagnostic summaries for stored MINS results."""
+"""Pure diagnostic summaries for stored NISMO results."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .results import MINSResult
+from .results import NISMOResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,13 +30,13 @@ class RunDiagnostics:
     compute_efficiency: float
 
 
-def posterior_ess(result: MINSResult) -> float:
+def posterior_ess(result: NISMOResult) -> float:
     """Return Kish effective sample size of normalized quadrature weights."""
     weights = result.posterior_weights
     return float(1.0 / np.sum(weights**2))
 
 
-def summarize(result: MINSResult) -> RunDiagnostics:
+def summarize(result: NISMOResult) -> RunDiagnostics:
     """Calculate minimal evidence-run health diagnostics."""
     ess = posterior_ess(result)
     n_weighted = result.niter + result.nlive

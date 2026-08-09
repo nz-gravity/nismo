@@ -1,4 +1,4 @@
-"""Optional terminal progress reporting for MINS runs."""
+"""Optional terminal progress reporting for NISMO runs."""
 
 from __future__ import annotations
 
@@ -60,11 +60,11 @@ class _TqdmProgress:
             from tqdm.auto import tqdm
         except ImportError as error:  # pragma: no cover - environment dependent
             raise MissingOptionalDependency(
-                "progress=True requires tqdm; install MINS with the 'progress' extra"
+                "progress=True requires tqdm; install NISMO with the 'progress' extra"
             ) from error
         self._bar = tqdm(
             total=None,
-            desc=f"MINS nlive={n_live}",
+            desc=f"NISMO nlive={n_live}",
             unit="it",
             dynamic_ncols=True,
             mininterval=0.2,

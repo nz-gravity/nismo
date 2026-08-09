@@ -1,7 +1,7 @@
 """Constrained Metropolis replacement kernels targeting the fixed density.
 
 The standard random-walk controller, uniform-ball proposal, and single
-bounding-ellipsoid construction are adapted from dynesty 3.1.0. MINS applies
+bounding-ellipsoid construction are adapted from dynesty 3.1.0. NISMO applies
 an additional fixed-``q0`` Metropolis correction because it operates directly
 in parameter space rather than through dynesty's unit-prior transform. The
 separate ``s-rwalk`` kernel uses a frozen regularized survivor covariance and
@@ -46,7 +46,7 @@ RWALK_CITATIONS = [
 
 
 class RWalkSampler:
-    """Stateful Dynesty-style controller for MINS's standard random walk."""
+    """Stateful Dynesty-style controller for NISMO's standard random walk."""
 
     def __init__(self, *, settings: RWalkSettings, ndim: int) -> None:
         walks = ndim + 20 if settings.walks is None else settings.walks
@@ -55,7 +55,7 @@ class RWalkSampler:
         self.ncdim = ndim if settings.ncdim is None else settings.ncdim
         if self.ncdim != ndim:
             raise ConfigurationError(
-                "rwalk ncdim must equal the model dimension for MINS proposals"
+                "rwalk ncdim must equal the model dimension for NISMO proposals"
             )
         self.scale = 1.0
         self.rwalk_history = {"n_accept": 0, "n_reject": 0}

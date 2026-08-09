@@ -1,4 +1,4 @@
-"""Non-CI repeated-seed comparison of MINS stopping policies on eggbox."""
+"""Non-CI repeated-seed comparison of NISMO stopping policies on eggbox."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from typing import Any
 import numpy as np
 from scipy.special import logsumexp
 
-from mins import (
+from nismo import (
     CallableModel,
-    MINSampler,
+    NISMOSampler,
     StoppingCriterionConfig,
     StoppingPolicy,
 )
-from mins.diagnostics import summarize
+from nismo.diagnostics import summarize
 
 BOX_WIDTH = 10.0 * np.pi
 
@@ -101,7 +101,7 @@ def run_case(
     truth: float,
 ) -> dict[str, Any]:
     model, proposal = eggbox_model()
-    sampler = MINSampler(
+    sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
         n_live=n_live,

@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this experimental software, cite this repository."
-title: "MINS: Morphing Importance Nested Sampling"
+title: "NISMO: Morphing Importance Nested Sampling"
 type: software
 version: 0.1.0.dev3
 date-released: 2026-07-25
 license: BSD-3-Clause
-repository-code: "https://github.com/EL-MZ/MINS"
+repository-code: "https://github.com/nz-gravity/nismo"

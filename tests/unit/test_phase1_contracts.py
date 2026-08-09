@@ -3,18 +3,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import mins
-from mins import CallableModel, ConfigurationError, InvalidModelOutput, MINSConfig
+import nismo
+from nismo import CallableModel, ConfigurationError, InvalidModelOutput, NISMOConfig
 
 pytestmark = pytest.mark.unit
 
 
 def test_public_import_and_version() -> None:
-    assert mins.__version__ == "0.1.0.dev3"
-    assert mins.Model is not None
-    assert mins.Proposal is not None
-    assert mins.RefittableProposal is not None
-    assert mins.ProposalUpdateRecord is not None
+    assert nismo.__version__ == "0.1.0.dev3"
+    assert nismo.Model is not None
+    assert nismo.Proposal is not None
+    assert nismo.RefittableProposal is not None
+    assert nismo.ProposalUpdateRecord is not None
 
 
 def test_callable_model_vectorized_and_scalar_agree() -> None:
@@ -105,7 +105,7 @@ def test_rng_reproducibility_is_explicit() -> None:
 )
 def test_config_validation(kwargs: dict[str, object], message: str) -> None:
     with pytest.raises(ConfigurationError, match=message):
-        MINSConfig(**kwargs)
+        NISMOConfig(**kwargs)
 
 
 def test_adaptive_scheme_requires_refittable_importance_morph() -> None:
@@ -126,7 +126,7 @@ def test_adaptive_scheme_requires_refittable_importance_morph() -> None:
         log_prior_fn=importance.log_prob,
     )
     with pytest.raises(TypeError, match="refit"):
-        mins.MINSampler(
+        nismo.NISMOSampler(
             model=model,
             importance_morph=importance,
             proposal_scheme="adaptive_morph",

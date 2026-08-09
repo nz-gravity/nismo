@@ -46,7 +46,7 @@ density `q0` for the complete run.
 ## 4. Run
 
 ```python
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="fixed_morph",
@@ -96,7 +96,7 @@ result.history.proposal_revision
 To experiment with periodic live-set proposal fits, select:
 
 ```python
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="adaptive_morph",
@@ -117,7 +117,7 @@ Dynesty-style walk, the statistically specified Gaussian walk, or an ensemble
 walk:
 
 ```python
-from mins import (
+from nismo import (
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
     ParallelSettings,
@@ -125,7 +125,7 @@ from mins import (
     SRWalkSettings,
 )
 
-rwalk_sampler = MINSampler(
+rwalk_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",
@@ -134,7 +134,7 @@ rwalk_sampler = MINSampler(
     rng=42,
 )
 
-statistical_rwalk_sampler = MINSampler(
+statistical_rwalk_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -143,7 +143,7 @@ statistical_rwalk_sampler = MINSampler(
     rng=42,
 )
 
-ensemble_sampler = MINSampler(
+ensemble_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="en-rwalk",
@@ -165,7 +165,7 @@ To prefetch whole constrained walks using persistent worker processes, pass
 the same settings to any sampler above:
 
 ```python
-parallel=ParallelSettings(n_workers=8, queue_size=8)
+parallel = ParallelSettings(n_workers=8, queue_size=8)
 ```
 
 Nested-sampling commits remain serial and candidates are consumed in FIFO
@@ -195,7 +195,7 @@ runs. Do not discard unchanged outputs or select only walkers that moved;
 conditioning on movement biases the replacement. See the dedicated
 [MCMC replacement guide](mcmc_replacements.md).
 
-If `walks` is omitted, MINS uses `model.ndim + 20`. Standard `rwalk` starts
+If `walks` is omitted, NISMO uses `model.ndim + 20`. Standard `rwalk` starts
 with scale 1 and tunes it toward the configured `facc` after every completed
 replacement. `ncdim` is accepted for Dynesty API familiarity but must be
 omitted or equal to the complete model dimension.
@@ -232,7 +232,7 @@ array. Duplicate rows are normal. Weighted estimates from `all_points` and
 figure, axes = plot_run(result)
 figure.savefig("run.png")
 
-from mins import plot_nested_progress
+from nismo import plot_nested_progress
 
 progress_figure, progress_axes = plot_nested_progress(result)
 progress_figure.savefig("nested_progress.png", dpi=150)

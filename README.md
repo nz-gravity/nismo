@@ -1,6 +1,6 @@
-# MINS
+# NISMO
 
-MINS is an experimental implementation of Morph-assisted nested importance
+NISMO is an experimental implementation of Morph-assisted nested importance
 sampling for post-processing Bayesian posterior samples.
 
 > **Development status:** pre-alpha research software. The importance Morph is
@@ -38,11 +38,11 @@ To run commands in the project environment, prefix them with `uv run`.
 ```python
 import numpy as np
 
-from mins import (
+from nismo import (
     CallableModel,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     MorphProposal,
     ParallelSettings,
     RWalkSettings,
@@ -64,7 +64,7 @@ importance_morph = MorphProposal.fit(
     param_names=model.parameter_names,
     groups=[],
 )
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="fixed_morph",
@@ -126,7 +126,7 @@ Three constrained Metropolis replacement schemes preserve the fixed importance
 target \(q_0\) without an external MCMC dependency:
 
 ```python
-rwalk_sampler = MINSampler(
+rwalk_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",
@@ -135,7 +135,7 @@ rwalk_sampler = MINSampler(
     rng=42,
 )
 
-statistical_rwalk_sampler = MINSampler(
+statistical_rwalk_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="s-rwalk",
@@ -144,7 +144,7 @@ statistical_rwalk_sampler = MINSampler(
     rng=42,
 )
 
-ensemble_sampler = MINSampler(
+ensemble_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="en-rwalk",
@@ -191,7 +191,7 @@ Complete replacements can be prefetched concurrently while dead-point and
 quadrature updates remain serial:
 
 ```python
-parallel_sampler = MINSampler(
+parallel_sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",

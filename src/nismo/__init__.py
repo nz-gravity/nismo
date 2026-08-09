@@ -1,11 +1,11 @@
-"""Public Phase 2 interface for MINS."""
+"""Public Phase 2 interface for NISMO."""
 
 from ._version import __version__
 from .config import (
     EnsembleMoveName,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
-    MINSConfig,
+    NISMOConfig,
     ParallelSettings,
     ProposalScheme,
     RWalkSettings,
@@ -15,8 +15,8 @@ from .exceptions import (
     ConfigurationError,
     InvalidModelOutput,
     InvalidProposalOutput,
-    MINSError,
     MissingOptionalDependency,
+    NISMOError,
     NumericalInvariantError,
     ProposalSupportError,
 )
@@ -29,8 +29,8 @@ from .replacement import (
     ReplacementResult,
     ReplacementSnapshot,
 )
-from .results import EnsembleMoveHistory, MINSResult, ProposalUpdateRecord, RunHistory
-from .sampler import MINSampler
+from .results import EnsembleMoveHistory, NISMOResult, ProposalUpdateRecord, RunHistory
+from .sampler import NISMOSampler
 from .stopping import StoppingCriterionConfig, StoppingPolicy
 
 __all__ = [
@@ -43,14 +43,14 @@ __all__ = [
     "EvaluationCounts",
     "InvalidModelOutput",
     "InvalidProposalOutput",
-    "MINSConfig",
-    "MINSError",
-    "MINSResult",
-    "MINSampler",
     "MissingOptionalDependency",
     "Model",
     "MorphMetadata",
     "MorphProposal",
+    "NISMOConfig",
+    "NISMOError",
+    "NISMOResult",
+    "NISMOSampler",
     "NumericalInvariantError",
     "ParallelSettings",
     "Proposal",

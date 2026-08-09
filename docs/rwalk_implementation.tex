@@ -13,31 +13,31 @@
 \usepackage{hyperref}
 \usepackage{fancyhdr}
 
-\definecolor{minsblue}{HTML}{164E63}
-\definecolor{minsgreen}{HTML}{166534}
-\definecolor{minsred}{HTML}{991B1B}
-\definecolor{minsgray}{HTML}{F3F4F6}
+\definecolor{nismoblue}{HTML}{164E63}
+\definecolor{nismogreen}{HTML}{166534}
+\definecolor{nismored}{HTML}{991B1B}
+\definecolor{nismogray}{HTML}{F3F4F6}
 \definecolor{codegray}{HTML}{4B5563}
 
 \hypersetup{
   colorlinks=true,
-  linkcolor=minsblue,
-  urlcolor=minsblue,
-  citecolor=minsblue,
-  pdftitle={The Current Dynesty-Style rwalk Implementation in MINS},
-  pdfauthor={MINS contributors}
+  linkcolor=nismoblue,
+  urlcolor=nismoblue,
+  citecolor=nismoblue,
+  pdftitle={The Current Dynesty-Style rwalk Implementation in NISMO},
+  pdfauthor={NISMO contributors}
 }
 
-\lstdefinestyle{minspython}{
+\lstdefinestyle{nismopython}{
   language=Python,
   basicstyle=\ttfamily\small,
-  keywordstyle=\color{minsblue}\bfseries,
-  commentstyle=\color{minsgreen},
-  stringstyle=\color{minsred},
+  keywordstyle=\color{nismoblue}\bfseries,
+  commentstyle=\color{nismogreen},
+  stringstyle=\color{nismored},
   numbers=left,
   numberstyle=\scriptsize\color{codegray},
   numbersep=8pt,
-  backgroundcolor=\color{minsgray},
+  backgroundcolor=\color{nismogray},
   frame=single,
   rulecolor=\color{gray!35},
   breaklines=true,
@@ -45,9 +45,9 @@
   columns=fullflexible,
   keepspaces=true
 }
-\lstset{style=minspython}
+\lstset{style=nismopython}
 
-\newcommand{\MINS}{\textsc{MINS}}
+\newcommand{\NISMO}{\textsc{NISMO}}
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
 \newcommand{\R}{\mathbb{R}}
 
@@ -58,13 +58,13 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\MINS{} standard \code{rwalk}}
+\lhead{\NISMO{} standard \code{rwalk}}
 \rhead{\thepage}
 \setlength{\headheight}{14pt}
 
 \title{\textbf{The Current Dynesty-Style \code{rwalk}\\
-Implementation in \MINS}}
-\author{Implementation specification for \code{mins} version
+Implementation in \NISMO}}
+\author{Implementation specification for \code{nismo} version
 \code{0.1.0.dev3}}
 \date{\today}
 
@@ -74,12 +74,12 @@ Implementation in \MINS}}
 
 \begin{abstract}
 This document specifies the standard \code{proposal_scheme="rwalk"} kernel
-currently implemented by \MINS.  It follows the actual Python execution path,
+currently implemented by \NISMO.  It follows the actual Python execution path,
 including configuration resolution, construction and caching of the bounding
 ellipsoid, uniform-ball proposals, the fixed-\(q_0\) Metropolis correction,
 scale adaptation, tie handling, resource limits, and recorded diagnostics.
 The controller and ellipsoid mechanics are adapted from Dynesty 3.1.0, while
-the target density and acceptance rule are specific to \MINS.
+the target density and acceptance rule are specific to \NISMO.
 \end{abstract}
 
 \tableofcontents
@@ -95,10 +95,10 @@ settings.
 The implementation is divided among three modules:
 
 \begin{itemize}
-  \item \code{src/mins/config.py}: public \code{RWalkSettings};
-  \item \code{src/mins/mcmc.py}: controller, ellipsoid, proposal, Metropolis
+  \item \code{src/nismo/config.py}: public \code{RWalkSettings};
+  \item \code{src/nismo/mcmc.py}: controller, ellipsoid, proposal, Metropolis
         transition, tuning, and method citation;
-  \item \code{src/mins/sampler.py}: run-level controller lifetime, dispatch,
+  \item \code{src/nismo/sampler.py}: run-level controller lifetime, dispatch,
         public citation property, live-set replacement, and histories.
 \end{itemize}
 
@@ -109,7 +109,7 @@ under Dynesty's MIT terms in the repository's \code{NOTICE} file.
 
 Let \(L(\theta)\) be the likelihood, \(\pi(\theta)\) the normalized prior,
 and \(q_0(\theta)\) the fixed normalized importance density supplied as
-\code{importance_morph}.  \MINS{} defines
+\code{importance_morph}.  \NISMO{} defines
 
 \begin{equation}
   \log \Psi_0(\theta)
@@ -127,9 +127,9 @@ At one nested iteration, the discarded live point defines the threshold
 \end{equation}
 
 This differs from Dynesty's usual unit-cube construction.  Dynesty obtains the
-prior density through a prior transform, whereas \MINS{} walks directly in
+prior density through a prior transform, whereas \NISMO{} walks directly in
 physical parameter space.  Consequently, merely passing the constraint is
-not enough: \MINS{} must also apply a Metropolis ratio involving \(q_0\).
+not enough: \NISMO{} must also apply a Metropolis ratio involving \(q_0\).
 
 \section{Public configuration and exact resolution}
 
@@ -173,7 +173,7 @@ The settings \code{n_steps}, \code{scale},
 \code{covariance_shrinkage}, and \code{covariance_jitter} are not accepted by
 standard \code{rwalk}.  Supplying them causes normal Python constructor errors.
 
-Each call to \code{MINSampler.run()} constructs a fresh controller, so every
+Each call to \code{NISMOSampler.run()} constructs a fresh controller, so every
 run begins with scale one, zero acceptance history, and no cached ellipsoid.
 
 \section{Starting state and constraint ordering}
@@ -328,7 +328,7 @@ Then \(r\) is uniform in the unit \(D\)-ball and the proposal is
 
 where \(A\) is the cached ellipsoid axis matrix and \(s\) is the scale frozen
 at the start of the complete walk.  Equation~\eqref{eq:proposal} is symmetric
-about the current state.  \MINS{} does not clip, reflect, wrap, or redraw a
+about the current state.  \NISMO{} does not clip, reflect, wrap, or redraw a
 physical-space proposal.  Prior support is handled by ordinary evaluation and
 rejection.
 
@@ -422,7 +422,7 @@ return current
 \section{Scale adaptation}
 
 Let \(A_k\) and \(R_k\) denote accepted and rejected transitions accumulated
-in the controller.  In the current serial \MINS{} path, tuning updates after
+in the controller.  In the current serial \NISMO{} path, tuning updates after
 every completed replacement, so normally
 
 \begin{equation}
@@ -445,11 +445,11 @@ Acceptance above target expands the next walk; acceptance below target shrinks
 it.  After Equation~\eqref{eq:tune}, both accumulated history counters reset
 to zero.  The optional \code{update=False} controller path only accumulates
 history and is retained from the Dynesty-style interface, but the current
-serial \MINS{} dispatch updates immediately after a completed walk.
+serial \NISMO{} dispatch updates immediately after a completed walk.
 
 \section{Resource limits and failure semantics}
 
-Before constructing a bound or starting a chain, \MINS{} rejects the complete
+Before constructing a bound or starting a chain, \NISMO{} rejects the complete
 replacement without any new likelihood calls when:
 
 \begin{itemize}
@@ -534,9 +534,9 @@ the target and is not implemented.
 Explicit control:
 
 \begin{lstlisting}
-from mins import MINSampler, RWalkSettings
+from nismo import NISMOSampler, RWalkSettings
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",
@@ -557,7 +557,7 @@ result = sampler.run(
 Dynesty-style top-level defaults:
 
 \begin{lstlisting}
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="rwalk",

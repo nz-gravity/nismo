@@ -13,31 +13,31 @@
 \usepackage{hyperref}
 \usepackage{fancyhdr}
 
-\definecolor{minsblue}{HTML}{164E63}
-\definecolor{minsgreen}{HTML}{166534}
-\definecolor{minsred}{HTML}{991B1B}
-\definecolor{minsgray}{HTML}{F3F4F6}
+\definecolor{nismoblue}{HTML}{164E63}
+\definecolor{nismogreen}{HTML}{166534}
+\definecolor{nismored}{HTML}{991B1B}
+\definecolor{nismogray}{HTML}{F3F4F6}
 \definecolor{codegray}{HTML}{4B5563}
 
 \hypersetup{
   colorlinks=true,
-  linkcolor=minsblue,
-  urlcolor=minsblue,
-  citecolor=minsblue,
-  pdftitle={MINS: Mathematics, Implementation, API Adaptation, and Termination Rules},
-  pdfauthor={MINS contributors}
+  linkcolor=nismoblue,
+  urlcolor=nismoblue,
+  citecolor=nismoblue,
+  pdftitle={NISMO: Mathematics, Implementation, API Adaptation, and Termination Rules},
+  pdfauthor={NISMO contributors}
 }
 
-\lstdefinestyle{minspython}{
+\lstdefinestyle{nismopython}{
   language=Python,
   basicstyle=\ttfamily\small,
-  keywordstyle=\color{minsblue}\bfseries,
-  commentstyle=\color{minsgreen},
-  stringstyle=\color{minsred},
+  keywordstyle=\color{nismoblue}\bfseries,
+  commentstyle=\color{nismogreen},
+  stringstyle=\color{nismored},
   numbers=left,
   numberstyle=\scriptsize\color{codegray},
   numbersep=8pt,
-  backgroundcolor=\color{minsgray},
+  backgroundcolor=\color{nismogray},
   frame=single,
   rulecolor=\color{gray!35},
   breaklines=true,
@@ -47,9 +47,9 @@
   columns=fullflexible,
   keepspaces=true
 }
-\lstset{style=minspython}
+\lstset{style=nismopython}
 
-\newcommand{\MINS}{\textsc{MINS}}
+\newcommand{\NISMO}{\textsc{NISMO}}
 \newcommand{\MorphZ}{\textsc{MorphZ}}
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
 \newcommand{\breakcode}[1]{\nolinkurl{#1}}
@@ -59,7 +59,7 @@
 \newcommand{\logPsi}{\log\Psi}
 \newcommand{\important}[1]{%
   \begin{center}
-  \fcolorbox{minsblue}{minsgray}{%
+  \fcolorbox{nismoblue}{nismogray}{%
     \begin{minipage}{0.92\linewidth}
     #1
     \end{minipage}}
@@ -74,14 +74,14 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\MINS{} mathematics and implementation}
+\lhead{\NISMO{} mathematics and implementation}
 \rhead{\thepage}
 \setlength{\headheight}{14pt}
 
-\title{\textbf{MINS}\\
+\title{\textbf{NISMO}\\
 Mathematics, Implementation, API Adaptation,\\
 and Termination Rules}
-\author{Implementation guide for \code{mins} version \code{0.1.0.dev3}}
+\author{Implementation guide for \code{nismo} version \code{0.1.0.dev3}}
 \date{Code audit: repository commit \code{934195f}}
 
 \begin{document}
@@ -90,14 +90,14 @@ and Termination Rules}
 
 \begin{abstract}
 This document explains the mathematics implemented by the current
-Morph-assisted nested importance sampling (\MINS) code and connects each
+Morph-assisted nested importance sampling (\NISMO) code and connects each
 equation to the corresponding stage of the Python execution path.  It also
 specifies the public input contracts, shows which arguments must change for
 common alternative user setups, describes the returned weighted posterior,
 and gives the exact scientific, resource-limit, and exception termination
 semantics.  The description is an implementation audit of the repository
 version stated above; it is not a generic account of all algorithms that might
-be called MINS.
+be called NISMO.
 \end{abstract}
 
 \tableofcontents
@@ -105,7 +105,7 @@ be called MINS.
 
 \section{What the current code does}
 
-\MINS{} is a \emph{post-processing evidence estimator}.  The user first
+\NISMO{} is a \emph{post-processing evidence estimator}.  The user first
 provides posterior samples obtained by some other method.  \MorphZ{} fits a
 fixed normalized density \(q(\theta)\) to those samples.  The sampler then
 rewrites the Bayesian evidence integral as a nested-sampling problem under
@@ -346,7 +346,7 @@ constrained draws.
 
 \subsection{Equal-weight resampling}
 
-\code{MINSResult.resample_equal} uses randomized systematic resampling.  For a
+\code{NISMOResult.resample_equal} uses randomized systematic resampling.  For a
 requested count \(M\), it draws one \(U\sim\operatorname{Uniform}(0,1)\), forms
 \[
   r_m=\frac{m+U}{M},\qquad m=0,\ldots,M-1,
@@ -359,11 +359,11 @@ accepts weights.
 \section{Exact execution path}
 \label{sec:execution}
 
-This section follows \code{MINSampler.run} in execution order.
+This section follows \code{NISMOSampler.run} in execution order.
 
 \subsection{Step 0: resolve and validate configuration}
 
-\code{MINSConfig} is immutable and validates all settings before sampling.
+\code{NISMOConfig} is immutable and validates all settings before sampling.
 If neither \code{dlogz} nor \code{stopping} is supplied, the configuration is
 resolved to \code{dlogz=1e-3}.  A \code{dlogz} value is internally
 represented as a one-criterion \code{StoppingPolicy} using
@@ -531,9 +531,9 @@ monotone, and the stored evidence can be reconstructed from the stored arrays.
 \begin{lstlisting}
 import numpy as np
 
-from mins import (
+from nismo import (
     CallableModel,
-    MINSampler,
+    NISMOSampler,
     MorphProposal,
     StoppingCriterionConfig,
     StoppingPolicy,
@@ -564,7 +564,7 @@ importance_morph = MorphProposal.fit(
     kde_bw="silverman",
 )
 
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     proposal_scheme="fixed_morph",
@@ -679,7 +679,7 @@ and let \MorphZ{} greedily choose disjoint groups.  The literal
 \code{"n_group"} is invalid.\\
 \code{group_file} &
 \code{None} or path to Morph-compatible JSON. &
-Use when a grouping definition was computed previously.  MINS reads it and
+Use when a grouping definition was computed previously.  NISMO reads it and
 passes its contents in memory.\\
 \code{groups} &
 \code{None} or in-memory Morph grouping definition. &
@@ -733,13 +733,13 @@ proposal = MorphProposal.fit(
 )
 \end{lstlisting}
 
-\code{MINSampler.from_posterior_samples} is a convenience path.  Every item in
+\code{NISMOSampler.from_posterior_samples} is a convenience path.  Every item in
 \code{morph_config} is passed to \code{MorphProposal.fit}, while parameter
 names are taken from the model; do not duplicate \code{param_names} inside
 \code{morph_config}:
 
 \begin{lstlisting}
-sampler = MINSampler.from_posterior_samples(
+sampler = NISMOSampler.from_posterior_samples(
     model=model,
     posterior_samples=samples,
     morph_config={
@@ -769,7 +769,7 @@ class UniformBoxProposal:
         return np.where(inside, -2.0 * np.log(10.0), -np.inf)
 
 importance_morph = UniformBoxProposal()
-sampler = MINSampler(
+sampler = NISMOSampler(
     model=model,
     importance_morph=importance_morph,
     n_live=500,
@@ -917,7 +917,7 @@ Set \code{tie_policy="randomized_plateau"}.  Strict ordering can exhaust its
 proposal budget because equal values do not satisfy \(>\).\\
 Custom normalized proposal &
 Implement \code{ndim}, \code{sample(n,rng)}, and \code{log_prob(theta)};
-construct \code{MINSampler} directly and omit Morph fitting arguments.\\
+construct \code{NISMOSampler} directly and omit Morph fitting arguments.\\
 More stringent default completion &
 Decrease \code{dlogz}; also raise hard budgets so they do not stop the run
 first.  Validate by repeated runs rather than interpreting \code{dlogz} as an
@@ -1201,7 +1201,7 @@ before the first replacement.
 \subsection{Returned hard-stop failures}
 
 The following reasons return an immutable, internally consistent
-\code{MINSResult} with the current final-live correction, but set
+\code{NISMOResult} with the current final-live correction, but set
 \code{success=False}:
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{0.32\linewidth}
@@ -1242,7 +1242,7 @@ check both fields:
 
 \begin{lstlisting}
 if not result.success:
-    print("MINS did not converge scientifically:", result.termination_reason)
+    print("NISMO did not converge scientifically:", result.termination_reason)
 \end{lstlisting}
 
 \subsection{Ordering and simultaneous conditions}
@@ -1441,33 +1441,33 @@ coverage, parameterization, and plateau policy should be investigated.
 \textbf{Source file} & \textbf{Responsibility}\\
 \midrule
 \endhead
-\code{src/mins/model.py} &
+\code{src/nismo/model.py} &
 Model protocol, callable adaptation, point-shape validation.\\
-\breakcode{src/mins/proposals/base.py} &
+\breakcode{src/nismo/proposals/base.py} &
 Normalized proposal sampling/density protocol.\\
-\breakcode{src/mins/proposals/morph.py} &
+\breakcode{src/nismo/proposals/morph.py} &
 \MorphZ{} fitting, grouping inputs, fixed \code{GroupKDE} sampling and
 row-wise normalized log-density adapter.\\
-\code{src/mins/constrained.py} &
+\code{src/nismo/constrained.py} &
 Batch density evaluation, count tracking, support checks, and independent
 strict/lexicographic constrained rejection.\\
-\code{src/mins/quadrature.py} &
+\code{src/nismo/quadrature.py} &
 Log-space deterministic volumes, dead/live contributions, evidence,
 information, posterior weights, and theoretical error.\\
-\code{src/mins/stopping.py} &
+\code{src/nismo/stopping.py} &
 Stopping configuration, finite-live diagnostics, criterion comparisons,
 combination, iteration gate, and consecutive streak.\\
-\code{src/mins/config.py} &
+\code{src/nismo/config.py} &
 Immutable run configuration, legacy stopping resolution, and validation.\\
-\code{src/mins/sampler.py} &
+\code{src/nismo/sampler.py} &
 Serial state machine, hard-limit ordering, history/progress snapshots,
 termination reason, finalization, and result construction.\\
-\code{src/mins/results.py} &
+\code{src/nismo/results.py} &
 Immutable result/history containers, consistency checks, convenience arrays,
 and systematic equal-weight resampling.\\
-\code{src/mins/diagnostics.py} &
+\code{src/nismo/diagnostics.py} &
 Read-only summary diagnostics computed from a completed result.\\
-\code{src/mins/progress.py} &
+\code{src/nismo/progress.py} &
 Silent, callback, and optional \code{tqdm} progress reporters.\\
 \bottomrule
 \end{longtable}

@@ -14,7 +14,7 @@ from itertools import pairwise
 import numpy as np
 from numpy.typing import NDArray
 
-from .config import MINSConfig, TiePolicy
+from .config import NISMOConfig, TiePolicy
 from .constrained import (
     BatchEvaluator,
     ConstrainedAttempt,
@@ -107,7 +107,7 @@ class ReplacementJob:
 
     job_id: int
     snapshot: ReplacementSnapshot
-    config: MINSConfig
+    config: NISMOConfig
     model: Model
     importance_morph: Proposal
     proposal_morph: Proposal
@@ -163,8 +163,7 @@ class QueueDiagnostics:
             raise ValueError("classified candidates cannot exceed completed jobs")
         if (
             self.wasted_prefetch_likelihood_calls
-            != self.prefetch_likelihood_calls
-            - self.used_prefetch_likelihood_calls
+            != self.prefetch_likelihood_calls - self.used_prefetch_likelihood_calls
         ):
             raise ValueError("wasted prefetch calls must equal total minus used")
 
@@ -205,8 +204,7 @@ class QueueAccounting:
             prefetch_likelihood_calls=self.prefetch_likelihood_calls,
             used_prefetch_likelihood_calls=self.used_prefetch_likelihood_calls,
             wasted_prefetch_likelihood_calls=(
-                self.prefetch_likelihood_calls
-                - self.used_prefetch_likelihood_calls
+                self.prefetch_likelihood_calls - self.used_prefetch_likelihood_calls
             ),
         )
 
@@ -223,10 +221,7 @@ class ReplacementQueue:
     def extend(self, results: list[ReplacementResult]) -> None:
         if self._results and results and results[0].job_id <= self._results[-1].job_id:
             raise ValueError("replacement job IDs must increase across refills")
-        if any(
-            right.job_id <= left.job_id
-            for left, right in pairwise(results)
-        ):
+        if any(right.job_id <= left.job_id for left, right in pairwise(results)):
             raise ValueError("replacement results must use increasing job IDs")
         self._results.extend(results)
 
@@ -383,7 +378,7 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
             max_likelihood_calls=job.max_likelihood_calls,
             deadline=job.deadline,
         )
-    else:  # pragma: no cover - MINSConfig validates proposal schemes
+    else:  # pragma: no cover - NISMOConfig validates proposal schemes
         raise RuntimeError(f"unsupported proposal scheme: {config.proposal_scheme!r}")
 
     return ReplacementResult(

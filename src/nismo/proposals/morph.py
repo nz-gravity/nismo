@@ -35,16 +35,16 @@ class MorphMetadata:
 
 
 class MorphProposal:
-    """Adapt a fixed normalized ``morphZ.GroupKDE`` to MINS.
+    """Adapt a fixed normalized ``morphZ.GroupKDE`` to NISMO.
 
     Instances must be constructed with :meth:`fit`.
 
     Notes
     -----
-    MorphZ 0.4.1 accepts an integer seed in ``resample``. MINS derives that
+    MorphZ 0.4.1 accepts an integer seed in ``resample``. NISMO derives that
     integer from the run's explicit :class:`numpy.random.Generator`. The
     inspected MorphZ implementation temporarily seeds NumPy's legacy global
-    RNG and restores its previous state before returning. MINS never directly
+    RNG and restores its previous state before returning. NISMO never directly
     reseeds global state.
     """
 
@@ -129,7 +129,7 @@ class MorphProposal:
             total correlations and ``GroupKDE`` performs greedy disjoint-group
             selection. Temporary TC artifacts are removed after fitting.
         group_file
-            JSON grouping definition accepted by MorphZ. MINS reads the file
+            JSON grouping definition accepted by MorphZ. NISMO reads the file
             and passes its contents in memory to prevent MorphZ from writing a
             sibling selection file.
         groups
@@ -183,7 +183,7 @@ class MorphProposal:
             import morphZ
         except ImportError as error:  # pragma: no cover - environment dependent
             raise MissingOptionalDependency(
-                "MorphProposal requires MorphZ; install MINS with the 'morph' extra"
+                "MorphProposal requires MorphZ; install NISMO with the 'morph' extra"
             ) from error
 
         if morph_type is not None:
@@ -200,7 +200,7 @@ class MorphProposal:
                 raise ValueError(
                     "group order in morph_type cannot exceed posterior dimension"
                 )
-            with TemporaryDirectory(prefix="mins-morphz-tc-") as temporary_path:
+            with TemporaryDirectory(prefix="nismo-morphz-tc-") as temporary_path:
                 morphZ.Nth_TC.compute_and_save_tc(
                     samples,
                     names=list(names),
@@ -254,7 +254,7 @@ class MorphProposal:
             ),
             morphz_version=str(getattr(morphZ, "__version__", "unknown")),
             rng_note=(
-                "MINS derives an integer seed from its Generator for each MorphZ "
+                "NISMO derives an integer seed from its Generator for each MorphZ "
                 "resample call; MorphZ 0.4.1 restores legacy global RNG state."
             ),
         )

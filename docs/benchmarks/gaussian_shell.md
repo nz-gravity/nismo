@@ -19,7 +19,7 @@ termination, and log evidence within `0.3` of radial quadrature. It is marked
 Run:
 
 ```bash
-MPLCONFIGDIR=/tmp/mins-mpl PYTHONPATH=src python -m pytest \
+MPLCONFIGDIR=/tmp/nismo-mpl PYTHONPATH=src python -m pytest \
   tests/statistical/test_benchmarks.py::test_grouped_morph_gaussian_shell_regression \
   -m slow
 ```

@@ -32,5 +32,5 @@ jobs:
       - run: uv build
       - run: uvx twine check dist/*
       - run: python -m pip install dist/*.whl
-      - run: cd "${RUNNER_TEMP}" && python -c "import mins; print(mins.__version__)"
+      - run: cd "${RUNNER_TEMP}" && python -c "import nismo; print(nismo.__version__)"
 

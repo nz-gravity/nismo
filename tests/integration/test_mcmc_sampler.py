@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 from tests.helpers import StandardNormalProposal
 
-from mins import (
+from nismo import (
     CallableModel,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     RWalkSettings,
     SRWalkSettings,
 )
@@ -50,7 +50,7 @@ def test_mcmc_samplers_are_reproducible_and_report_separate_diagnostics(
     else:
         kwargs = {"ensemble_rwalk_settings": settings}
     results = [
-        MINSampler(
+        NISMOSampler(
             model=model,
             importance_morph=proposal,
             proposal_scheme=proposal_scheme,  # type: ignore[arg-type]
@@ -110,7 +110,7 @@ def test_mcmc_samplers_are_reproducible_and_report_separate_diagnostics(
 
 def test_mixed_ensemble_moves_report_exact_result_level_counts() -> None:
     model, proposal = _constant_problem()
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=proposal,
         proposal_scheme="en-rwalk",
@@ -148,7 +148,7 @@ def test_mixed_ensemble_moves_report_exact_result_level_counts() -> None:
 
 def test_non_mcmc_history_keeps_nested_efficiency_semantics() -> None:
     model, proposal = _constant_problem()
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=proposal,
         n_live=10,
@@ -172,7 +172,7 @@ def test_non_mcmc_history_keeps_nested_efficiency_semantics() -> None:
 
 def test_mcmc_likelihood_limit_never_returns_a_shortened_chain() -> None:
     model, proposal = _constant_problem()
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=proposal,
         proposal_scheme="rwalk",
@@ -195,7 +195,7 @@ def test_mcmc_likelihood_limit_never_returns_a_shortened_chain() -> None:
 
 def test_rwalk_exposes_only_the_skilling_method_citation() -> None:
     model, proposal = _constant_problem()
-    sampler = MINSampler(
+    sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
         proposal_scheme="rwalk",
@@ -209,7 +209,7 @@ def test_rwalk_exposes_only_the_skilling_method_citation() -> None:
 
 def test_rwalk_default_uses_ndim_plus_twenty_walks() -> None:
     model, proposal = _constant_problem()
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=proposal,
         proposal_scheme="rwalk",

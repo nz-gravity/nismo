@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from mins import MissingOptionalDependency
-from mins.progress import create_progress_reporter
+from nismo import MissingOptionalDependency
+from nismo.progress import create_progress_reporter
 
 pytestmark = pytest.mark.unit
 

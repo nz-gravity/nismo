@@ -7,7 +7,7 @@ complete; extended research-validation matrix remains available for follow-up).
 
 | Phase | Status | Implemented evidence |
 |---|---|---|
-| Phase 1 | Complete | `src/mins/replacement.py` defines immutable copied snapshots, jobs, results, and worker-local counts; the coordinator retains all commits. The default singleton path preserves the original RNG stream. |
+| Phase 1 | Complete | `src/nismo/replacement.py` defines immutable copied snapshots, jobs, results, and worker-local counts; the coordinator retains all commits. The default singleton path preserves the original RNG stream. |
 | Phase 2 | Complete | Deterministic `ReplacementQueue` FIFO semantics, current-threshold/tie revalidation, stale rejection, revision invalidation, and serial `queue_size > 1` execution are implemented and tested. |
 | Phase 3 | Complete | One persistent `ProcessPoolExecutor` per run constructs complete `rwalk`, `s-rwalk`, and `en-rwalk` attempts. Ordered `executor.map` consumption is scheduling-independent; job RNG entropy is generated deterministically by the coordinator. |
 | Phase 4 | Complete | Queue refills are proposal epochs. Walk scales and live geometry are frozen per epoch, tuning is aggregated only when the epoch drains, and adaptive-Morph refit boundaries cap an epoch. |
@@ -134,7 +134,7 @@ Do not add multiprocessing yet.
 
 ## Current concern
 
-The current `MINSampler.run()` controls both candidate generation and all nested-sampling state updates.
+The current `NISMOSampler.run()` controls both candidate generation and all nested-sampling state updates.
 
 This should be split so replacement construction can later run inside workers without allowing workers to mutate sampler state.
 
@@ -203,22 +203,22 @@ commit_replacement(result)
 Primary files:
 
 ```text
-src/mins/sampler.py
-src/mins/constrained.py
-src/mins/mcmc.py
+src/nismo/sampler.py
+src/nismo/constrained.py
+src/nismo/mcmc.py
 ```
 
 Recommended new module:
 
 ```text
-src/mins/replacement.py
+src/nismo/replacement.py
 ```
 
 Do not substantially rewrite the mathematics in:
 
 ```text
-src/mins/quadrature.py
-src/mins/stopping.py
+src/nismo/quadrature.py
+src/nismo/stopping.py
 ```
 
 These should continue to operate in the main coordinator.
@@ -247,8 +247,7 @@ This separates statistical correctness from multiprocessing complexity.
 Suggested abstraction:
 
 ```python
-class ReplacementQueue:
-    ...
+class ReplacementQueue: ...
 ```
 
 Responsibilities:
@@ -352,10 +351,7 @@ where each job performs enough work to amortize process overhead.
 For example:
 
 ```python
-jobs = [
-    make_replacement_job(snapshot, seed)
-    for seed in child_seeds
-]
+jobs = [make_replacement_job(snapshot, seed) for seed in child_seeds]
 
 results = pool.map(build_replacement, jobs)
 ```
@@ -557,7 +553,7 @@ parallel = ParallelSettings(
 Then:
 
 ```python
-sampler = MINSampler(
+sampler = NISMOSampler(
     ...,
     parallel=parallel,
 )
@@ -566,8 +562,8 @@ sampler = MINSampler(
 Keep serial defaults:
 
 ```python
-n_workers=1
-queue_size=1
+n_workers = 1
+queue_size = 1
 ```
 
 ## Queue size

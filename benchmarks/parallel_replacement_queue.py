@@ -21,9 +21,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from mins import (
+from nismo import (
     EnsembleRWalkSettings,
-    MINSampler,
+    NISMOSampler,
     ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
@@ -153,7 +153,7 @@ def main() -> None:
         baseline_seconds: float | None = None
         for n_workers in args.workers:
             for queue_size in args.queue_sizes:
-                sampler = MINSampler(
+                sampler = NISMOSampler(
                     model=model,
                     importance_morph=StandardNormalProposal(),
                     proposal_scheme=scheme,
@@ -197,9 +197,7 @@ def main() -> None:
                         "wall_seconds": wall_seconds,
                         "speedup": speedup,
                         "likelihood_calls": result.n_likelihood_calls,
-                        "calls_per_second": (
-                            result.n_likelihood_calls / wall_seconds
-                        ),
+                        "calls_per_second": (result.n_likelihood_calls / wall_seconds),
                         "queue_efficiency": diagnostics.queue_efficiency,
                         "stale_fraction": stale_fraction,
                         "wasted_likelihood_calls": (
@@ -216,4 +214,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

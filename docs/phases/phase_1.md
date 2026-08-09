@@ -6,11 +6,11 @@ Create a modern, installable Python package skeleton without publishing it.
 
 ## Inputs received from the project owner
 
-- `MINS_Agent_Implementation_Plan_Phases_1_2.docx`
-- `MINS_PHASE_2_MORPH_NESTED_SAMPLING.md`
+- `NISMO_Agent_Implementation_Plan_Phases_1_2.docx`
+- `NISMO_PHASE_2_MORPH_NESTED_SAMPLING.md`
 - An installed editable MorphZ 0.4.1 development package
 
-No prior MINS source, notebooks, tests, benchmarks, or metadata were present.
+No prior NISMO source, notebooks, tests, benchmarks, or metadata were present.
 
 ## Mathematical decisions and assumptions
 
@@ -19,7 +19,7 @@ defines normalized model/proposal interfaces and explicit RNG ownership.
 
 ## Architecture/files changed
 
-Created `pyproject.toml`, project metadata, a `src/mins` namespace, model and
+Created `pyproject.toml`, project metadata, a `src/nismo` namespace, model and
 proposal protocols, immutable configuration, typed exceptions, documentation,
 examples, tests, and CI.
 
@@ -35,14 +35,14 @@ PYTHONPATH=src python examples/smoke.py
 python -m build --no-isolation
 python -m ruff format --check .
 python -m ruff check .
-python -m mypy src/mins
+python -m mypy src/nismo
 python -m twine check dist/*
-python -m venv --system-site-packages /tmp/mins-phase1.23r7PJ/venv
-/tmp/mins-phase1.23r7PJ/venv/bin/python -m pip install \
-  --no-deps dist/mins-0.1.0.dev0-py3-none-any.whl
+python -m venv --system-site-packages /tmp/nismo-phase1.23r7PJ/venv
+/tmp/nismo-phase1.23r7PJ/venv/bin/python -m pip install \
+  --no-deps dist/nismo-0.1.0.dev0-py3-none-any.whl
 # From /tmp:
-/tmp/mins-phase1.23r7PJ/venv/bin/python -c \
-  "import mins; print(mins.__version__); print(mins.__file__)"
+/tmp/nismo-phase1.23r7PJ/venv/bin/python -c \
+  "import nismo; print(nismo.__version__); print(nismo.__file__)"
 ```
 
 ## Test and benchmark results
@@ -79,7 +79,7 @@ See the commands above and the repository README.
 
 ## Questions requiring owner decision
 
-Confirm the eventual distribution name `mins` before publication.
+Confirm the eventual distribution name `nismo` before publication.
 
 ## Recommendation: proceed, revise, or stop
 

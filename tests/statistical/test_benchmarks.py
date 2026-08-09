@@ -10,7 +10,7 @@ from benchmarks.models import (
 )
 from scipy.special import logsumexp
 
-from mins import MINSampler, MorphProposal
+from nismo import MorphProposal, NISMOSampler
 
 pytestmark = pytest.mark.statistical
 
@@ -36,7 +36,7 @@ def test_analytic_gaussian_repeated_seed_aggregate(
     logz_errors = []
     second_moments = []
     for seed in (11, 12, 13):
-        result = MINSampler(
+        result = NISMOSampler(
             model=benchmark.model(),
             importance_morph=proposal,
             n_live=25,
@@ -74,7 +74,7 @@ def test_direct_importance_cross_check(
         model.log_likelihood(theta) + model.log_prior(theta) - proposal.log_prob(theta)
     )
     direct_logz = float(logsumexp(log_weights) - np.log(len(theta)))
-    nested = MINSampler(
+    nested = NISMOSampler(
         model=model,
         importance_morph=proposal,
         n_live=25,
@@ -95,7 +95,7 @@ def test_adaptive_morph_keeps_fixed_q0_fields_and_records_refits(
 ) -> None:
     benchmark, importance_morph = gaussian_problem
     model = benchmark.model()
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=importance_morph,
         proposal_scheme="adaptive_morph",
@@ -124,7 +124,7 @@ def test_adaptive_morph_keeps_fixed_q0_fields_and_records_refits(
 
 def test_peak_plateau_regression_uses_explicit_tie_policy() -> None:
     benchmark = PeakPlateauBenchmark()
-    result = MINSampler(
+    result = NISMOSampler(
         model=benchmark.model(),
         importance_morph=UniformBoxProposal(),
         n_live=40,
@@ -152,7 +152,7 @@ def test_grouped_morph_gaussian_shell_regression() -> None:
         param_names=("x", "y"),
         kde_bw="silverman",
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=benchmark.model(),
         importance_morph=proposal,
         n_live=25,

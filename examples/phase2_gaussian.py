@@ -7,9 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
-from mins import CallableModel, MINSampler, MorphProposal
-from mins.diagnostics import summarize
-from mins.plotting import plot_posterior_1d, plot_run, plot_weight_health
+from nismo import CallableModel, MorphProposal, NISMOSampler
+from nismo.diagnostics import summarize
+from nismo.plotting import plot_posterior_1d, plot_run, plot_weight_health
 
 
 def build_model() -> CallableModel:
@@ -26,7 +26,7 @@ def build_model() -> CallableModel:
 
 
 def main() -> None:
-    """Fit Morph, run MINS, report diagnostics, and optionally save plots."""
+    """Fit Morph, run NISMO, report diagnostics, and optionally save plots."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
@@ -40,7 +40,7 @@ def main() -> None:
         param_names=("x",),
         kde_bw="silverman",
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=build_model(),
         importance_morph=importance_morph,
         n_live=25,

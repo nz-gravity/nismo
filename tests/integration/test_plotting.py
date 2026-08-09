@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 from tests.helpers import StandardNormalProposal
 
-from mins import CallableModel, MINSampler, plot_nested_progress
-from mins.plotting import plot_posterior_1d, plot_run, plot_weight_health
+from nismo import CallableModel, NISMOSampler, plot_nested_progress
+from nismo.plotting import plot_posterior_1d, plot_run, plot_weight_health
 
 matplotlib.use("Agg")
 pytestmark = pytest.mark.integration
@@ -20,7 +20,7 @@ def test_plots_return_figures_without_showing() -> None:
         log_likelihood_fn=lambda x: np.full(len(x), np.log(1.5)),
         log_prior_fn=proposal.log_prob,
     )
-    result = MINSampler(
+    result = NISMOSampler(
         model=model,
         importance_morph=proposal,
         n_live=8,

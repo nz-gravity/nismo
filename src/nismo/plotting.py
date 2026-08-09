@@ -7,10 +7,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .results import MINSResult
+from .results import NISMOResult
 
 
-def plot_run(result: MINSResult) -> tuple[Any, Any]:
+def plot_run(result: NISMOResult) -> tuple[Any, Any]:
     """Create the three-panel Phase 2 run diagnostic.
 
     Returns
@@ -68,7 +68,7 @@ def plot_run(result: MINSResult) -> tuple[Any, Any]:
     return figure, axes
 
 
-def plot_nested_progress(result: MINSResult) -> tuple[Any, Any]:
+def plot_nested_progress(result: NISMOResult) -> tuple[Any, Any]:
     """Plot live-set, remaining-evidence, and threshold progression.
 
     The live-set panel uses the stored minimum, median, and maximum
@@ -146,7 +146,7 @@ def plot_nested_progress(result: MINSResult) -> tuple[Any, Any]:
     return figure, axes
 
 
-def plot_weight_health(result: MINSResult) -> tuple[Any, Any]:
+def plot_weight_health(result: NISMOResult) -> tuple[Any, Any]:
     """Plot sorted posterior weights and cumulative mass."""
     import matplotlib.pyplot as plt
 
@@ -164,7 +164,7 @@ def plot_weight_health(result: MINSResult) -> tuple[Any, Any]:
 
 
 def plot_posterior_1d(
-    result: MINSResult,
+    result: NISMOResult,
     *,
     parameter: int = 0,
     bins: int = 30,
@@ -176,7 +176,7 @@ def plot_posterior_1d(
     Parameters
     ----------
     result
-        Stored MINS result.
+        Stored NISMO result.
     parameter
         Zero-based parameter column.
     bins
@@ -197,7 +197,7 @@ def plot_posterior_1d(
         weights=result.posterior_weights,
         density=True,
         alpha=0.45,
-        label="MINS weighted posterior",
+        label="NISMO weighted posterior",
     )
     if truth_x is not None and truth_density is not None:
         coordinates = np.asarray(truth_x, dtype=float)
