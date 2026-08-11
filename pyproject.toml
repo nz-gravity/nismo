@@ -54,6 +54,11 @@ dev = [
   "tqdm>=4.66",
   "twine>=5",
 ]
+ligo = [
+    "bilby>=2.8.2",
+    "gwpy>=3.0.14",
+    "lalsuite>=7.26.15",
+]
 
 [project.urls]
 Documentation = "https://github.com/nz-gravity/nismo/tree/main/docs"
