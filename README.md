@@ -1,4 +1,4 @@
-# NISMO: Morphing Importance Nested Sampling
+# NISMO: Nested Importance Sampling Morph Optimisation
 
 [![PyPI version](https://img.shields.io/pypi/v/nismo.svg)](https://pypi.org/project/nismo/)
 [![Python versions](https://img.shields.io/pypi/pyversions/nismo.svg)](https://pypi.org/project/nismo/)
