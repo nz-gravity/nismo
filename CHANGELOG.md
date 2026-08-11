@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.0 - 2026-08-11
+
+- Prepared the first PyPI release with synchronized package metadata, an OIDC
+  trusted-publishing workflow, and distribution validation.
+- Replaced development reports and generated artifacts in `docs/` with focused
+  installation, quick-start, configuration, result, and public API guides.
+- Added all user-facing diagnostics and plotting helpers to the top-level
+  `nismo` namespace.
+
 - `dlogz` now measures an estimated remaining increment in log evidence. Users
   requiring the previous live-evidence-fraction behavior should use the
   explicit `remaining_fraction` stopping criterion.

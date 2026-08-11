@@ -259,7 +259,7 @@ class NISMOSampler:
     model
         Batch model with a normalized ``log_prior``.
     importance_morph
-        Fixed normalized importance distribution. Phase 2 normally uses
+        Fixed normalized importance distribution. NISMO normally uses
         :class:`~nismo.MorphProposal`.
     proposal_scheme
         ``"fixed_morph"`` draws from the importance Morph.
@@ -1135,7 +1135,7 @@ class NISMOSampler:
         )
         success = termination_reason in SCIENTIFIC_TERMINATION_REASONS
         warnings = [
-            "Phase 2 uses a fixed non-defensive Morph pseudo-prior; missing "
+            "NISMO uses a fixed non-defensive Morph pseudo-prior; missing "
             "support can bias logz and is not automatically repaired."
         ]
         if not success:

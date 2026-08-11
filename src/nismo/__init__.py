@@ -1,4 +1,4 @@
-"""Public Phase 2 interface for NISMO."""
+"""Public interface for NISMO."""
 
 from ._version import __version__
 from .config import (
@@ -11,6 +11,7 @@ from .config import (
     RWalkSettings,
     SRWalkSettings,
 )
+from .diagnostics import RunDiagnostics, posterior_ess, summarize
 from .exceptions import (
     ConfigurationError,
     InvalidModelOutput,
@@ -21,7 +22,12 @@ from .exceptions import (
     ProposalSupportError,
 )
 from .model import CallableModel, Model
-from .plotting import plot_nested_progress
+from .plotting import (
+    plot_nested_progress,
+    plot_posterior_1d,
+    plot_run,
+    plot_weight_health,
+)
 from .proposals import MorphMetadata, MorphProposal, Proposal, RefittableProposal
 from .replacement import (
     EvaluationCounts,
@@ -62,10 +68,16 @@ __all__ = [
     "RefittableProposal",
     "ReplacementResult",
     "ReplacementSnapshot",
+    "RunDiagnostics",
     "RunHistory",
     "SRWalkSettings",
     "StoppingCriterionConfig",
     "StoppingPolicy",
     "__version__",
     "plot_nested_progress",
+    "plot_posterior_1d",
+    "plot_run",
+    "plot_weight_health",
+    "posterior_ess",
+    "summarize",
 ]

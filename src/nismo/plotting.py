@@ -11,7 +11,7 @@ from .results import NISMOResult
 
 
 def plot_run(result: NISMOResult) -> tuple[Any, Any]:
-    """Create the three-panel Phase 2 run diagnostic.
+    """Create the three-panel run diagnostic.
 
     Returns
     -------
