@@ -74,7 +74,7 @@ def load_simulation(idx, output_root=None):
     # --------------------------------------------------------------
     # Priors with extrinsics fixed
     # --------------------------------------------------------------
-    priors = bilby.gw.prior.BBHPriorDict(ANALYSIS_DIR / "pp.prior")
+    priors = bilby.gw.prior.BBHPriorDict(str(ANALYSIS_DIR / "pp.prior"))
     extrinsic = [
         "psi",
         "ra",

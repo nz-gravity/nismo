@@ -59,9 +59,16 @@ def build_model(
     fixed_values: dict[str, float],
 ) -> Any:
     """Wrap the original Bilby parameterization in NISMO's batch contract."""
+    from bilby.core.prior import PriorDict
+
     from nismo import CallableModel
 
     parameter_names = tuple(names)
+    # Fixed parameters define the lower-dimensional model but must not
+    # contribute delta-function densities to its Lebesgue prior measure.
+    sampled_priors = PriorDict(
+        dictionary={name: priors[name] for name in parameter_names}
+    )
 
     def parameters_for(theta: np.ndarray) -> dict[str, float]:
         values = dict(zip(parameter_names, theta, strict=True))
@@ -70,16 +77,21 @@ def build_model(
 
     def log_prior(theta: np.ndarray) -> np.ndarray:
         return np.asarray(
-            [priors.ln_prob(parameters_for(row)) for row in theta], dtype=float
+            [
+                sampled_priors.ln_prob(dict(zip(parameter_names, row, strict=True)))
+                for row in theta
+            ],
+            dtype=float,
         )
 
     def log_likelihood(theta: np.ndarray) -> np.ndarray:
         values = np.empty(len(theta), dtype=float)
         for index, row in enumerate(theta):
             params = parameters_for(row)
-            # Bilby likelihoods retain a mutable parameter mapping.
-            likelihood.parameters.update(params)
-            values[index] = likelihood.log_likelihood()
+            # Pass parameters explicitly: this is compatible with the Bilby
+            # API used to create the legacy Dynesty results and avoids its
+            # deprecated mutable-parameter fallback.
+            values[index] = likelihood.log_likelihood(params)
         return values
 
     return CallableModel(
@@ -121,12 +133,13 @@ def audit_posterior_contract(
         np.isfinite(likelihood_difference)
     ):
         raise RuntimeError("reconstructed posterior audit produced non-finite values")
+    likelihood_offset = float(np.median(likelihood_difference))
+    likelihood_residual = likelihood_difference - likelihood_offset
     return {
         "n_points": len(indices),
         "max_abs_log_prior_difference": float(np.max(np.abs(prior_difference))),
-        "max_abs_log_likelihood_difference": float(
-            np.max(np.abs(likelihood_difference))
-        ),
+        "log_likelihood_offset": likelihood_offset,
+        "max_abs_log_likelihood_residual": float(np.max(np.abs(likelihood_residual))),
     }
 
 
@@ -233,7 +246,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    from bilby.result import read_in_result
+    from bilby.core.result import read_in_result
     from pp_setup import load_simulation
 
     default_result = (
@@ -267,7 +280,7 @@ def main() -> None:
     print("Posterior reconstruction audit:", json.dumps(audit, indent=2))
     max_audit_difference = max(
         audit["max_abs_log_prior_difference"],
-        audit["max_abs_log_likelihood_difference"],
+        audit["max_abs_log_likelihood_residual"],
     )
     if max_audit_difference > args.audit_tolerance:
         raise RuntimeError(

@@ -32,5 +32,10 @@ counts, Morph metadata, and a reconstructed-prior/likelihood audit. The audit
 must pass before NISMO starts; use `--audit-tolerance` only to accommodate a
 verified, small cross-version numerical difference.
 
+Some legacy Bilby result files store `posterior.log_likelihood` as a likelihood
+ratio while their `log_evidence` and fresh likelihood evaluations use the full
+normalization. The audit records that constant as `log_likelihood_offset` and
+checks the residual variation; NISMO always uses the full likelihood.
+
 For an array run, submit `nismo.slurm`. Set `MORPHZ_VENV` if the existing
 Bilby/MorphZ environment is not `/morphZ_casestudy_CBC_pe/.venv`.
