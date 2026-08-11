@@ -2,7 +2,6 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/nismo.svg)](https://pypi.org/project/nismo/)
 [![Python versions](https://img.shields.io/pypi/pyversions/nismo.svg)](https://pypi.org/project/nismo/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/nismo.svg)](https://pypi.org/project/nismo/)
 [![License](https://img.shields.io/pypi/l/nismo.svg)](https://pypi.org/project/nismo/)
 
 
