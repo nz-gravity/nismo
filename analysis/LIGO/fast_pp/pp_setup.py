@@ -19,7 +19,7 @@ import pandas as pd
 ANALYSIS_DIR = Path(__file__).resolve().parent
 
 
-def load_simulation(idx, output_root=None):
+def load_simulation(idx, output_root=None, plot_data=True):
     bilby.core.utils.random.seed(idx)
     # --------------------------------------------------------------
     # Load injection
@@ -69,7 +69,8 @@ def load_simulation(idx, output_root=None):
         start_time=inj["geocent_time"] - 2,
     )
     ifos.inject_signal(waveform_generator=waveform_generator, parameters=inj)
-    ifos.plot_data(outdir=outdir, label=label)
+    if plot_data:
+        ifos.plot_data(outdir=outdir, label=label)
 
     # --------------------------------------------------------------
     # Priors with extrinsics fixed

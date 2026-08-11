@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ MODULE_PATH = (
 SPEC = importlib.util.spec_from_file_location("ligo_nismo_computation", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
@@ -69,3 +71,9 @@ def test_posterior_parameter_names_rejects_missing_coordinate() -> None:
 
     with pytest.raises(ValueError, match="missing"):
         RUNNER.posterior_parameter_names(result)
+
+
+def test_default_max_iterations_scales_with_live_count() -> None:
+    assert RUNNER.default_max_iterations(100) == 10_000
+    assert RUNNER.default_max_iterations(500) == 12_500
+    assert RUNNER.default_max_iterations(2_000) == 50_000

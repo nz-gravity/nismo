@@ -16,8 +16,11 @@ staged elsewhere on a cluster.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -46,9 +49,73 @@ def training_samples(result: Any, names: Sequence[str]) -> np.ndarray:
     return samples
 
 
+def default_max_iterations(n_live: int) -> int:
+    """Return a live-count-scaled hard ceiling for production analyses."""
+    return max(10_000, 25 * n_live)
+
+
+def load_existing_morphz(result_path: Path, index: int) -> dict[str, Any] | None:
+    """Load the existing Dynesty-trained MorphZ estimate when available."""
+    comparison_path = result_path.parent / f"seed_{index}_lnz_comparison.csv"
+    if not comparison_path.is_file():
+        return None
+    with comparison_path.open(newline="", encoding="utf-8") as stream:
+        for row in csv.DictReader(stream):
+            if row.get("method") == "dynesty_morphz":
+                return {
+                    "lnz_mean": float(row["lnz"]),
+                    "lnz_err": float(row["lnz_err"]),
+                    "source": str(comparison_path.resolve()),
+                }
+    return None
+
+
 def fixed_parameter_values(priors: Any) -> dict[str, float]:
     """Extract values for Bilby priors fixed by the PP analysis."""
     return {str(name): float(priors[name].peak) for name in priors.fixed_keys}
+
+
+@dataclass
+class BilbyLIGOModel:
+    """Pickleable batch-model adapter for NISMO replacement workers."""
+
+    parameter_names: tuple[str, ...]
+    likelihood: Any
+    sampled_priors: Any
+    fixed_values: dict[str, float]
+
+    @property
+    def ndim(self) -> int:
+        return len(self.parameter_names)
+
+    def _sampled_parameters(self, theta: np.ndarray) -> dict[str, float]:
+        return dict(zip(self.parameter_names, theta, strict=True))
+
+    def _parameters(self, theta: np.ndarray) -> dict[str, float]:
+        parameters = self._sampled_parameters(theta)
+        parameters.update(self.fixed_values)
+        return parameters
+
+    def log_prior(self, theta: np.ndarray) -> np.ndarray:
+        return np.asarray(
+            [
+                self.sampled_priors.ln_prob(self._sampled_parameters(row))
+                for row in theta
+            ],
+            dtype=float,
+        )
+
+    def log_likelihood(self, theta: np.ndarray) -> np.ndarray:
+        values = np.empty(len(theta), dtype=float)
+        for index, row in enumerate(theta):
+            sampled_values = self._sampled_parameters(row)
+            # A KDE proposal has tails beyond the physical prior.  Do not pass
+            # those points to LAL: their posterior integrand is exactly zero.
+            if not np.isfinite(self.sampled_priors.ln_prob(sampled_values)):
+                values[index] = -np.inf
+                continue
+            values[index] = self.likelihood.log_likelihood(self._parameters(row))
+        return values
 
 
 def build_model(
@@ -61,8 +128,6 @@ def build_model(
     """Wrap the original Bilby parameterization in NISMO's batch contract."""
     from bilby.core.prior import PriorDict
 
-    from nismo import CallableModel
-
     parameter_names = tuple(names)
     # Fixed parameters define the lower-dimensional model but must not
     # contribute delta-function densities to its Lebesgue prior measure.
@@ -70,42 +135,11 @@ def build_model(
         dictionary={name: priors[name] for name in parameter_names}
     )
 
-    def parameters_for(theta: np.ndarray) -> dict[str, float]:
-        values = dict(zip(parameter_names, theta, strict=True))
-        values.update(fixed_values)
-        return values
-
-    def log_prior(theta: np.ndarray) -> np.ndarray:
-        return np.asarray(
-            [
-                sampled_priors.ln_prob(dict(zip(parameter_names, row, strict=True)))
-                for row in theta
-            ],
-            dtype=float,
-        )
-
-    def log_likelihood(theta: np.ndarray) -> np.ndarray:
-        values = np.empty(len(theta), dtype=float)
-        for index, row in enumerate(theta):
-            sampled_values = dict(zip(parameter_names, row, strict=True))
-            # A KDE proposal has tails beyond the physical prior.  Do not pass
-            # those points to LAL: their posterior integrand is exactly zero.
-            if not np.isfinite(sampled_priors.ln_prob(sampled_values)):
-                values[index] = -np.inf
-                continue
-            params = parameters_for(row)
-            # Pass parameters explicitly: this is compatible with the Bilby
-            # API used to create the legacy Dynesty results and avoids its
-            # deprecated mutable-parameter fallback.
-            values[index] = likelihood.log_likelihood(params)
-        return values
-
-    return CallableModel(
-        ndim=len(parameter_names),
+    return BilbyLIGOModel(
         parameter_names=parameter_names,
-        log_likelihood_fn=log_likelihood,
-        log_prior_fn=log_prior,
-        vectorized=True,
+        likelihood=likelihood,
+        sampled_priors=sampled_priors,
+        fixed_values=fixed_values,
     )
 
 
@@ -158,9 +192,11 @@ def run_nismo(
     dlogz: float,
     seed: int,
     morph_type: str,
+    max_iterations: int | None,
+    progress: bool,
 ) -> tuple[Any, Any]:
     """Fit one fixed Morph proposal and run a fresh NISMO calculation."""
-    from nismo import MorphProposal, NISMOSampler
+    from nismo import MorphProposal, NISMOSampler, ParallelSettings
 
     proposal = MorphProposal.fit(
         samples,
@@ -171,11 +207,15 @@ def run_nismo(
     sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
-        proposal_scheme="fixed_morph",
+        proposal_scheme="en-rwalk",
         n_live=n_live,
         rng=seed,
+        parallel=ParallelSettings(n_workers=4, queue_size=4),
     )
-    return sampler.run(dlogz=dlogz, progress=True), proposal
+    run_kwargs: dict[str, Any] = {"dlogz": dlogz, "progress": progress}
+    if max_iterations is not None:
+        run_kwargs["max_iterations"] = max_iterations
+    return sampler.run(**run_kwargs), proposal
 
 
 def result_payload(
@@ -186,10 +226,12 @@ def result_payload(
     result_path: Path,
     names: Sequence[str],
     audit: dict[str, float | int],
-    morphz: dict[str, float] | None,
+    morphz: dict[str, Any] | None,
     seed: int,
     n_live: int,
     dlogz: float,
+    max_iterations: int | None,
+    runtime_seconds: float,
 ) -> dict[str, Any]:
     return {
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -198,8 +240,10 @@ def result_payload(
         "n_training_samples": int(proposal.metadata.n_training),
         "n_live": n_live,
         "dlogz": dlogz,
+        "max_iterations": max_iterations,
         "seed": seed,
-        "proposal_scheme": "fixed_morph",
+        "proposal_scheme": "en-rwalk",
+        "parallel": {"n_workers": 4, "queue_size": 4},
         "morph_metadata": {
             "selected_groups": [
                 list(group) for group in proposal.metadata.selected_groups
@@ -221,6 +265,7 @@ def result_payload(
             "n_likelihood_calls": int(nismo_result.n_likelihood_calls),
             "n_iterations": int(nismo_result.niter),
             "n_proposals": int(nismo_result.n_proposals),
+            "runtime_seconds": runtime_seconds,
             "warnings": list(nismo_result.warnings),
         },
     }
@@ -233,9 +278,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--n-live", type=int, default=500)
     parser.add_argument("--dlogz", type=float, default=0.1)
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        help="hard cap; defaults to max(10000, 25 * n_live)",
+    )
     parser.add_argument("--seed", type=int, default=20260811)
     parser.add_argument("--morph-type", default="2_group")
     parser.add_argument("--audit-points", type=int, default=32)
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="show NISMO's live terminal progress display",
+    )
     parser.add_argument(
         "--audit-tolerance",
         type=float,
@@ -243,9 +298,11 @@ def parse_args() -> argparse.Namespace:
         help="maximum allowed absolute reconstructed log-density discrepancy",
     )
     parser.add_argument(
-        "--skip-morphz",
-        action="store_true",
-        help="do not recompute the existing MorphZ post-processing estimate",
+        "--recompute-morphz",
+        dest="skip_morphz",
+        action="store_false",
+        default=True,
+        help="also recompute MorphZ instead of using the existing result",
     )
     return parser.parse_args()
 
@@ -268,7 +325,11 @@ def main() -> None:
         raise FileNotFoundError(result_path)
 
     dynesty_result = read_in_result(filename=str(result_path))
-    likelihood, priors, _, _, _ = load_simulation(args.index, output_root=output_dir)
+    likelihood, priors, _, _, _ = load_simulation(
+        args.index,
+        output_root=output_dir.parent,
+        plot_data=False,
+    )
     names = posterior_parameter_names(dynesty_result)
     samples = training_samples(dynesty_result, names)
     model = build_model(
@@ -294,7 +355,7 @@ def main() -> None:
             f"maximum discrepancy {max_audit_difference:.3e} exceeds "
             f"--audit-tolerance={args.audit_tolerance:.3e}"
         )
-    morphz = None
+    morphz = load_existing_morphz(result_path, args.index)
     if not args.skip_morphz:
         # Keep MorphZ as an independently reported post-processing comparator.
         # Its legacy routine also recomputes the Bilby likelihood at the
@@ -308,6 +369,12 @@ def main() -> None:
             label=f"seed_{args.index}_dynesty",
             output_dir=output_dir,
         )
+    max_iterations = (
+        args.max_iterations
+        if args.max_iterations is not None
+        else default_max_iterations(args.n_live)
+    )
+    nismo_start = time.perf_counter()
     nismo_result, proposal = run_nismo(
         model=model,
         samples=samples,
@@ -316,7 +383,10 @@ def main() -> None:
         dlogz=args.dlogz,
         seed=args.seed,
         morph_type=args.morph_type,
+        max_iterations=max_iterations,
+        progress=args.progress,
     )
+    nismo_runtime_seconds = time.perf_counter() - nismo_start
     payload = result_payload(
         dynesty_result=dynesty_result,
         nismo_result=nismo_result,
@@ -328,6 +398,8 @@ def main() -> None:
         seed=args.seed,
         n_live=args.n_live,
         dlogz=args.dlogz,
+        max_iterations=max_iterations,
+        runtime_seconds=nismo_runtime_seconds,
     )
     target = output_dir / "nismo_dynesty_comparison.json"
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")

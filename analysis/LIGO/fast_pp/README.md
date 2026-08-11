@@ -9,10 +9,14 @@ seed, lnZ_dynesty, lnZ_dynesty_err, lnZ_mcmc, lnZ_mcmc_err, lnZ_morph_dynesty, l
 
 ## Dynesty / MorphZ / NISMO comparison
 
-`nismo_computation.py` reads one completed `dynesty_result.json`, refits the
-existing MorphZ estimate, and runs a fresh fixed-importance NISMO calculation.
-NISMO fits its proposal from every stored Dynesty posterior row; it does not
-reuse Dynesty's sampler state or checkpoint files.
+`nismo_computation.py` reads one completed `dynesty_result.json` and runs a
+fresh NISMO calculation. NISMO fits its proposal from every stored Dynesty
+posterior row; it does not reuse Dynesty's sampler state or checkpoint files.
+The existing MorphZ results remain the comparator by default. Add
+`--recompute-morphz` only when a fresh MorphZ calculation is required.
+When no explicit `--max-iterations` is supplied, the runner uses
+`max(10000, 25 * n_live)` so larger live sets are not truncated by NISMO's
+fixed library default.
 
 ```bash
 python nismo_computation.py 48

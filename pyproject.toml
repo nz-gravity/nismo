@@ -87,6 +87,7 @@ target-version = "py310"
 line-length = 88
 src = ["src", "tests"]
 extend-exclude = [
+  "analysis/**",
   "examples/*.ipynb",
   "examples/g_shell.py",
 ]
