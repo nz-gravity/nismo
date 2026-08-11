@@ -10,11 +10,13 @@ pytestmark = pytest.mark.unit
 
 
 def test_public_import_and_version() -> None:
-    assert nismo.__version__ == "0.1.0.dev3"
+    assert nismo.__version__ == "0.1.0"
     assert nismo.Model is not None
     assert nismo.Proposal is not None
     assert nismo.RefittableProposal is not None
     assert nismo.ProposalUpdateRecord is not None
+    assert nismo.summarize is not None
+    assert nismo.plot_run is not None
 
 
 def test_callable_model_vectorized_and_scalar_agree() -> None:

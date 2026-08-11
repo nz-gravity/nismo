@@ -5,6 +5,19 @@ on:
   pull_request:
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra dev
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -15,10 +28,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v6
       - run: uv sync --extra dev
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
       - run: uv run pytest -m "not slow"
 
   distribution:
@@ -28,9 +39,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Record source version
+        run: |
+          NISMO_VERSION=$(python -c "import runpy; print(runpy.run_path('src/nismo/_version.py')['__version__'])")
+          echo "NISMO_EXPECTED_VERSION=$NISMO_VERSION" >> "$GITHUB_ENV"
       - run: uv build
-      - run: uvx twine check dist/*
+      - run: uvx twine check --strict dist/*
       - run: python -m pip install dist/*.whl
-      - run: cd "${RUNNER_TEMP}" && python -c "import nismo; print(nismo.__version__)"
-
+      - run: cd "${RUNNER_TEMP}" && python -c "import os, nismo; assert nismo.__version__ == os.environ['NISMO_EXPECTED_VERSION']"
