@@ -33,6 +33,25 @@ uv sync --extra morph --extra progress
 
 To run commands in the project environment, prefix them with `uv run`.
 
+## Run notebooks in Google Colab
+
+Use the one-click links below to open repository notebooks directly in Colab:
+
+- [eggbox.ipynb](https://colab.research.google.com/github/nz-gravity/nismo/blob/main/examples/eggbox.ipynb)
+- [gaussian shell.ipynb](https://colab.research.google.com/github/nz-gravity/nismo/blob/main/examples/gaussian%20shell.ipynb)
+- [gaussian_loggamma_dynesty_mins.ipynb](https://colab.research.google.com/github/nz-gravity/nismo/blob/main/examples/gaussian_loggamma_dynesty_mins.ipynb)
+- [peak_sampling.ipynb](https://colab.research.google.com/github/nz-gravity/nismo/blob/main/examples/peak_sampling.ipynb)
+
+In a fresh Colab runtime, run this once before executing notebook cells:
+
+```python
+%pip install -q "mins[morph,plot,progress] @ git+https://github.com/nz-gravity/nismo.git@main"
+```
+
+Then restart the runtime (`Runtime -> Restart session`) and run all cells.
+If you are working from a fork or branch, replace `nz-gravity/nismo` and
+`@main` in both the Colab URL and install command.
+
 ## Minimal API sketch
 
 ```python
@@ -230,7 +249,8 @@ stopping semantics are defined in
 [the mathematical contract](docs/mathematical_contract.md). See the
 [API guide](docs/api.md), [stopping guide](docs/stopping.md), and
 [MCMC replacement guide](docs/mcmc_replacements.md), and
-[Phase 2 tutorial](docs/tutorial.md) before using the estimator.
+[Phase 2 tutorial](docs/tutorial.md) before using the estimator. Notebook
+launch links are listed in [examples/README.md](examples/README.md).
 
 ## Development
 
