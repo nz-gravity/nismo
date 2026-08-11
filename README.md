@@ -78,10 +78,10 @@ benchmark problems.
 
 ## Installation
 
-Install NISMO and all user-facing optional features from PyPI:
+Install NISMO 0.1.2 and all user-facing optional features from PyPI:
 
 ```bash
-python -m pip install "nismo[all]"
+python -m pip install "nismo[all]==0.1.2"
 ```
 
 The core package requires only NumPy and SciPy. Optional extras can be installed
@@ -234,14 +234,14 @@ release process.
 
 If you use NISMO in research, cite the software using the repository's
 [`CITATION.cff`](https://github.com/nz-gravity/nismo/blob/main/CITATION.cff) or
-GitHub's **Cite this repository** menu. For version 0.1.0, a BibTeX entry is:
+GitHub's **Cite this repository** menu. For version 0.1.2, a BibTeX entry is:
 
 ```bibtex
 @software{nismo_2026,
   author  = {{NISMO contributors}},
   title   = {NISMO: Morphing Importance Nested Sampling},
   year    = {2026},
-  version = {0.1.0},
+  version = {0.1.2},
   url     = {https://github.com/nz-gravity/nismo}
 }
 ```
