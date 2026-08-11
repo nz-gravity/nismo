@@ -87,6 +87,12 @@ def build_model(
     def log_likelihood(theta: np.ndarray) -> np.ndarray:
         values = np.empty(len(theta), dtype=float)
         for index, row in enumerate(theta):
+            sampled_values = dict(zip(parameter_names, row, strict=True))
+            # A KDE proposal has tails beyond the physical prior.  Do not pass
+            # those points to LAL: their posterior integrand is exactly zero.
+            if not np.isfinite(sampled_priors.ln_prob(sampled_values)):
+                values[index] = -np.inf
+                continue
             params = parameters_for(row)
             # Pass parameters explicitly: this is compatible with the Bilby
             # API used to create the legacy Dynesty results and avoids its
