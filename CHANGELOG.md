@@ -3,6 +3,10 @@
 All notable changes to this project are documented here.
 
 ## Unreleased
+
+## 0.1.2 - 2026-08-11
+
+- Updated release metadata and README version references for the PyPI release.
 ## 0.1.1 - 2026-08-11
 ## 0.1.0 - 2026-08-11
 
