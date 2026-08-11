@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 
 ## Unreleased
-
+## 0.1.1 - 2026-08-11
 ## 0.1.0 - 2026-08-11
 
 - Prepared the first PyPI release with synchronized package metadata, an OIDC
