@@ -585,7 +585,6 @@ def run_nismo(
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
         NISMOSampler,
-        ParallelSettings,
         RWalkSettings,
         SRWalkSettings,
     )
@@ -622,7 +621,6 @@ def run_nismo(
 
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
-    parallel = ParallelSettings(n_workers=4)
     result = sampler.run(
         dlogz=dlogz,
         max_iterations=max_iterations,
