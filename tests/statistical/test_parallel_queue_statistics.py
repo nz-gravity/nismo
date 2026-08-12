@@ -7,7 +7,6 @@ from numpy.typing import NDArray
 from nismo import (
     EnsembleRWalkSettings,
     NISMOSampler,
-    ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
 )
@@ -71,10 +70,7 @@ def test_parallel_and_singleton_queues_have_equivalent_gaussian_aggregates(
     settings: dict[str, object],
 ) -> None:
     means: list[float] = []
-    for parallel in (
-        ParallelSettings(n_workers=1, queue_size=1),
-        ParallelSettings(n_workers=2, queue_size=3),
-    ):
+    for n_workers, queue_size in ((1, 1), (2, 3)):
         estimates = []
         for seed in (311, 312, 313):
             result = NISMOSampler(
@@ -83,7 +79,8 @@ def test_parallel_and_singleton_queues_have_equivalent_gaussian_aggregates(
                 proposal_scheme=proposal_scheme,  # type: ignore[arg-type]
                 n_live=30,
                 rng=seed,
-                parallel=parallel,
+                n_workers=n_workers,
+                queue_size=queue_size,
                 **settings,  # type: ignore[arg-type]
             ).run(
                 dlogz=0.12,

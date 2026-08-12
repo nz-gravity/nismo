@@ -23,7 +23,8 @@ Hard-stop reasons include `max_iterations`, `max_likelihood_calls`,
 `max_wall_time`, `max_proposals_per_replacement`,
 `constrained_sampling_exhausted`, `insufficient_eligible_survivors`,
 `insufficient_eligible_walkers`, and `plateau_stall`. These return a coherent
-partial quadrature with `success=False` and a warning in `result.warnings`.
+partial quadrature with `success=False`; inspect `termination_reason` before
+using its evidence estimate.
 
 Malformed model/proposal output and missing fixed-importance support instead
 raise subclasses of `NISMOError`, because a coherent result cannot be formed.

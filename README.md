@@ -145,6 +145,7 @@ sampler = NISMOSampler(
     proposal_scheme="fixed_morph",
     n_live=200,
     rng=42,
+    n_workers=1,
 )
 
 result = sampler.run(dlogz=1e-2, progress=True)
@@ -178,6 +179,9 @@ Select a scheme through `NISMOSampler(..., proposal_scheme=...)`:
 Finite-length MCMC replacements must be calibrated for the dimension and
 geometry of the target. See the configuration guide for move settings,
 parallel workers, queue size, stopping policies, and resource limits.
+
+Configure replacement parallelism directly in the sampler constructor, for
+example with `NISMOSampler(..., n_workers=8, queue_size=8)`.
 
 ## Results and diagnostics
 

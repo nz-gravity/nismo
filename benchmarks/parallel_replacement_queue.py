@@ -24,7 +24,6 @@ from numpy.typing import NDArray
 from nismo import (
     EnsembleRWalkSettings,
     NISMOSampler,
-    ParallelSettings,
     RWalkSettings,
     SRWalkSettings,
 )
@@ -159,10 +158,8 @@ def main() -> None:
                     proposal_scheme=scheme,
                     n_live=args.n_live,
                     rng=args.seed,
-                    parallel=ParallelSettings(
-                        n_workers=n_workers,
-                        queue_size=queue_size,
-                    ),
+                    n_workers=n_workers,
+                    queue_size=queue_size,
                     **_settings(scheme),
                 )
                 started = time.perf_counter()

@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from tests.helpers import StandardNormalProposal
 
 from nismo import (
+    ConfigurationError,
     EnsembleRWalkSettings,
     NISMOSampler,
     ParallelSettings,
@@ -72,7 +73,8 @@ def test_parallel_replacement_jobs_are_reproducible_and_serially_consumed(
             n_live=10,
             rng=88,
             tie_policy="randomized_plateau",
-            parallel=ParallelSettings(n_workers=2, queue_size=4),
+            n_workers=2,
+            queue_size=4,
             **settings,  # type: ignore[arg-type]
         ).run(
             dlogz=0.5,
@@ -113,7 +115,8 @@ def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
         n_live=10,
         rng=88,
         tie_policy="randomized_plateau",
-        parallel=ParallelSettings(n_workers=1, queue_size=4),
+        n_workers=1,
+        queue_size=4,
     ).run(
         dlogz=0.5,
         max_iterations=100,
@@ -143,7 +146,8 @@ def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:
     )
     explicit = NISMOSampler(
         **kwargs,  # type: ignore[arg-type]
-        parallel=ParallelSettings(n_workers=1, queue_size=1),
+        n_workers=1,
+        queue_size=1,
     ).run(
         dlogz=0.5,
         max_iterations=100,
@@ -168,7 +172,8 @@ def test_parallel_call_reservations_never_overshoot_hard_limit() -> None:
         n_live=10,
         rng=89,
         tie_policy="randomized_plateau",
-        parallel=ParallelSettings(n_workers=2, queue_size=4),
+        n_workers=2,
+        queue_size=4,
     ).run(
         dlogz=0.01,
         max_iterations=100,
@@ -190,7 +195,8 @@ def test_parallel_deadline_discards_prefetch_without_committing_late_result() ->
         n_live=10,
         rng=90,
         tie_policy="randomized_plateau",
-        parallel=ParallelSettings(n_workers=2, queue_size=2),
+        n_workers=2,
+        queue_size=2,
     ).run(
         dlogz=0.01,
         max_iterations=100,
@@ -199,3 +205,39 @@ def test_parallel_deadline_discards_prefetch_without_committing_late_result() ->
     )
     assert result.termination_reason == "max_wall_time"
     assert result.niter == 0
+    assert not any("partial-run estimate" in warning for warning in result.warnings)
+
+
+def test_direct_parallel_arguments_are_validated_and_stored() -> None:
+    sampler = NISMOSampler(
+        model=ConstantNormalModel(),
+        importance_morph=StandardNormalProposal(),
+        n_live=10,
+        rng=91,
+        n_workers=2,
+        queue_size=3,
+    )
+    assert sampler.n_workers == 2
+    assert sampler.queue_size == 3
+    assert sampler.parallel == ParallelSettings(n_workers=2, queue_size=3)
+
+    with pytest.raises(ConfigurationError, match="n_workers"):
+        NISMOSampler(
+            model=ConstantNormalModel(),
+            importance_morph=StandardNormalProposal(),
+            n_live=10,
+            rng=92,
+            n_workers=0,
+        )
+
+
+def test_legacy_parallel_settings_cannot_be_mixed_with_direct_arguments() -> None:
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        NISMOSampler(
+            model=ConstantNormalModel(),
+            importance_morph=StandardNormalProposal(),
+            n_live=10,
+            rng=93,
+            n_workers=2,
+            parallel=ParallelSettings(n_workers=2),
+        )

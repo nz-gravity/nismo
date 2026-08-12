@@ -30,6 +30,7 @@ from .constrained import (
     draw_constrained,
     validate_proposal_sample,
 )
+from .exceptions import ConfigurationError
 from .mcmc import (
     RWALK_CITATIONS,
     RWalkSampler,
@@ -283,8 +284,14 @@ class NISMOSampler:
         Optional immutable Gaussian-covariance random-walk settings.
     ensemble_rwalk_settings
         Optional immutable ensemble random-walk settings.
+    n_workers
+        Complete-replacement worker count. The default of one preserves
+        serial execution.
+    queue_size
+        FIFO replacement-prefetch depth. ``None`` resolves to ``n_workers``.
     parallel
-        Optional complete-replacement worker and FIFO prefetch settings.
+        Legacy complete-replacement settings object. Prefer ``n_workers`` and
+        ``queue_size``; do not combine the two forms.
     """
 
     def __init__(
@@ -301,6 +308,8 @@ class NISMOSampler:
         rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
+        n_workers: int = 1,
+        queue_size: int | None = None,
         parallel: ParallelSettings | None = None,
     ) -> None:
         if model.ndim != importance_morph.ndim:
@@ -335,7 +344,15 @@ class NISMOSampler:
             if ensemble_rwalk_settings is None
             else ensemble_rwalk_settings
         )
-        self.parallel = ParallelSettings() if parallel is None else parallel
+        if parallel is not None and (n_workers != 1 or queue_size is not None):
+            raise ConfigurationError(
+                "parallel cannot be combined with n_workers or queue_size"
+            )
+        resolved_parallel = (
+            ParallelSettings(n_workers=n_workers, queue_size=queue_size)
+            if parallel is None
+            else parallel
+        )
         NISMOConfig(
             n_live=n_live,
             proposal_batch_size=proposal_batch_size,
@@ -345,8 +362,11 @@ class NISMOSampler:
             rwalk_settings=self.rwalk_settings,
             srwalk_settings=self.srwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,
-            parallel=self.parallel,
+            parallel=resolved_parallel,
         )
+        self.parallel = resolved_parallel
+        self.n_workers = resolved_parallel.n_workers
+        self.queue_size = resolved_parallel.queue_size
         if proposal_scheme == "rwalk":
             RWalkSampler(settings=self.rwalk_settings, ndim=model.ndim)
         if proposal_scheme == "s-rwalk":
@@ -375,6 +395,8 @@ class NISMOSampler:
         rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
+        n_workers: int = 1,
+        queue_size: int | None = None,
         parallel: ParallelSettings | None = None,
     ) -> NISMOSampler:
         """Fit MorphZ once and construct a sampler.
@@ -399,6 +421,8 @@ class NISMOSampler:
             rwalk_settings=rwalk_settings,
             srwalk_settings=srwalk_settings,
             ensemble_rwalk_settings=ensemble_rwalk_settings,
+            n_workers=n_workers,
+            queue_size=queue_size,
             parallel=parallel,
         )
 
@@ -1134,15 +1158,7 @@ class NISMOSampler:
             ),
         )
         success = termination_reason in SCIENTIFIC_TERMINATION_REASONS
-        warnings = [
-            "NISMO uses a fixed non-defensive Morph pseudo-prior; missing "
-            "support can bias logz and is not automatically repaired."
-        ]
-        if not success:
-            warnings.append(
-                f"Run stopped by {termination_reason!r}; logz is a partial-run "
-                "estimate with the current live remainder."
-            )
+        warnings: list[str] = []
         if config.tie_policy == "randomized_plateau":
             warnings.append(
                 "randomized_plateau augments the pseudo-prior with stored "
