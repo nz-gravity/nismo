@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.4 - 2026-08-12
+
+- Fixed formatting and lint violations in the Gaussian-shell benchmark
+  examples so the release quality checks pass cleanly.
+
 ## 0.1.3 - 2026-08-12
 
 - Added sampler-level `output_path` persistence for weighted samples, complete

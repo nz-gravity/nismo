@@ -265,7 +265,9 @@ def posterior_information_kl(
     logl = np.asarray(posterior_log_likelihood, dtype=float)
     weights = np.asarray(posterior_weights, dtype=float)
     if logl.ndim != 1 or weights.ndim != 1 or logl.shape != weights.shape:
-        raise ValueError("posterior log-likelihoods and weights must be equal 1D arrays")
+        raise ValueError(
+            "posterior log-likelihoods and weights must be equal 1D arrays"
+        )
     if not math.isfinite(logz):
         return math.nan
 
@@ -361,9 +363,7 @@ def classifier_jsd_to_reference(
     )
 
     x = np.concatenate((posterior_subset, reference_subset), axis=0)
-    y = np.concatenate(
-        (np.zeros(n, dtype=np.int8), np.ones(n, dtype=np.int8)), axis=0
-    )
+    y = np.concatenate((np.zeros(n, dtype=np.int8), np.ones(n, dtype=np.int8)), axis=0)
 
     splitter = StratifiedKFold(
         n_splits=int(cv_folds),
@@ -382,9 +382,7 @@ def classifier_jsd_to_reference(
         classifier.fit(x[train_index], y[train_index])
         probability = classifier.predict_proba(x[test_index])[:, 1]
         probability = np.clip(probability, 1.0e-12, 1.0 - 1.0e-12)
-        losses.append(
-            float(log_loss(y[test_index], probability, labels=[0, 1]))
-        )
+        losses.append(float(log_loss(y[test_index], probability, labels=[0, 1])))
 
     cross_entropy = float(np.mean(losses))
     estimate = float(np.log(2.0) - cross_entropy)
@@ -759,7 +757,6 @@ def run_nismo(
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
         NISMOSampler,
-        ParallelSettings,
         RWalkSettings,
         SRWalkSettings,
     )
@@ -796,7 +793,6 @@ def run_nismo(
 
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
-    parallel = ParallelSettings(n_workers=8)
     result = sampler.run(
         dlogz=dlogz,
         max_iterations=max_iterations,
@@ -952,16 +948,14 @@ def summarize_rows(
                 "bias": float(np.mean(errors)),
                 "mean_abs_error": float(np.mean(np.abs(errors))),
                 "rmse": float(np.sqrt(np.mean(errors**2))),
-                "kl_mean": (
-                    float(np.mean(kl_finite)) if len(kl_finite) else math.nan
-                ),
+                "kl_mean": (float(np.mean(kl_finite)) if len(kl_finite) else math.nan),
                 "kl_std": sample_standard_deviation(kl_finite),
                 "kl_sem": (
                     sample_standard_deviation(kl_finite) / math.sqrt(len(kl_finite))
                     if len(kl_finite)
                     else math.nan
                 ),
-                "kl_n": int(len(kl_finite)),
+                "kl_n": len(kl_finite),
                 "jsd_mean": (
                     float(np.mean(jsd_finite)) if len(jsd_finite) else math.nan
                 ),
@@ -971,7 +965,7 @@ def summarize_rows(
                     if len(jsd_finite)
                     else math.nan
                 ),
-                "jsd_n": int(len(jsd_finite)),
+                "jsd_n": len(jsd_finite),
                 "ncall_direct_mean": float(np.mean(ncall_direct)),
                 "ncall_direct_std": sample_standard_deviation(ncall_direct),
                 "ncall_training_mean": float(np.mean(ncall_training)),
@@ -1190,7 +1184,9 @@ def plot_jsd_summary(
     """Plot classifier-estimated JSD to the reference posterior versus n_live."""
     import matplotlib.pyplot as plt
 
-    usable = [row for row in summaries if math.isfinite(finite_float(row.get("jsd_mean")))]
+    usable = [
+        row for row in summaries if math.isfinite(finite_float(row.get("jsd_mean")))
+    ]
     if not usable:
         return None
 
@@ -1269,7 +1265,9 @@ def plot_kl_summary(
     """Plot KL(posterior || prior), i.e. nested-sampling information H."""
     import matplotlib.pyplot as plt
 
-    usable = [row for row in summaries if math.isfinite(finite_float(row.get("kl_mean")))]
+    usable = [
+        row for row in summaries if math.isfinite(finite_float(row.get("kl_mean")))
+    ]
     if not usable:
         return None
 
@@ -1940,12 +1938,15 @@ def main() -> int:
         nlive=args.reference_nlive,
         repeat=0,
     )
-    cached_reference = load_reference_cache(output_dir, fingerprint) if args.resume else None
+    cached_reference = (
+        load_reference_cache(output_dir, fingerprint) if args.resume else None
+    )
     if cached_reference is not None:
         reference_posterior, reference_metadata = cached_reference
         print(
             "Loaded cached Dynesty reference posterior: "
-            f"nlive={reference_metadata['nlive']}, shape={tuple(reference_posterior.shape)}"
+            f"nlive={reference_metadata['nlive']}, "
+            f"shape={tuple(reference_posterior.shape)}"
         )
     else:
         print(
@@ -2082,7 +2083,8 @@ def main() -> int:
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
-                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; "
+                    f"JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
             except BaseException as error:
@@ -2131,7 +2133,9 @@ def main() -> int:
                 )
                 if run_posterior is None:
                     raise RuntimeError("Dynesty run did not return posterior samples")
-                jsd_to_reference, jsd_sample_count = diagnostic_jsd(run_posterior, nlive, repeat)
+                jsd_to_reference, jsd_sample_count = diagnostic_jsd(
+                    run_posterior, nlive, repeat
+                )
                 row = make_success_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -2158,7 +2162,8 @@ def main() -> int:
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
-                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; "
+                    f"JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
             except BaseException as error:
@@ -2297,7 +2302,9 @@ def main() -> int:
                 )
                 if run_posterior is None:
                     raise RuntimeError("NISMO run did not return posterior samples")
-                jsd_to_reference, jsd_sample_count = diagnostic_jsd(run_posterior, nlive, repeat)
+                jsd_to_reference, jsd_sample_count = diagnostic_jsd(
+                    run_posterior, nlive, repeat
+                )
                 direct = int(statistics["ncall"])
                 status = "success" if statistics["success"] else "incomplete"
                 warning_message = " | ".join(statistics["warnings"])
@@ -2333,7 +2340,8 @@ def main() -> int:
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
-                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; "
+                    f"JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={direct:,}; "
                     f"termination={statistics['termination_reason']}"
                 )
