@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.3 - 2026-08-12
+
 - Added sampler-level `output_path` persistence for weighted samples, complete
   run history, strict JSON diagnostics, and standard diagnostic plots, plus
   reusable `NISMOResult.save()` and `save_run_outputs()` APIs.

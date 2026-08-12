@@ -160,10 +160,10 @@ class RWalkSettings:
 class SRWalkSettings:
     """Settings for the Gaussian-covariance constrained ``q0`` random walk."""
 
-    n_steps: int = 25
+    n_steps: int = 75
     scale: float | None = None
     facc: float = 0.5
-    covariance_shrinkage: float = 0.1
+    covariance_shrinkage: float = 0.25
     covariance_jitter: float = 1.0e-10
     covariance_update_interval: int = 1
     covariance_rebuild_interval: int | None = None
