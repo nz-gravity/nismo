@@ -159,6 +159,62 @@ class EnsembleMoveHistory:
 
 
 @dataclass(frozen=True, slots=True)
+class SRWalkDiagnostics:
+    """Opt-in component timings and movement diagnostics for ``s-rwalk``."""
+
+    geometry_updates: int
+    geometry_rebuilds: int
+    factor_refreshes: int
+    completed_walks: int
+    geometry_update_seconds: float
+    geometry_rebuild_seconds: float
+    factorization_seconds: float
+    proposal_linear_algebra_seconds: float
+    prior_seconds: float
+    likelihood_seconds: float
+    q0_seconds: float
+    queue_setup_seconds: float
+    worker_dispatch_seconds: float
+    total_squared_displacement: float
+    stale_candidates: int
+    completed_candidates: int
+
+    def __post_init__(self) -> None:
+        integer_names = (
+            "geometry_updates",
+            "geometry_rebuilds",
+            "factor_refreshes",
+            "completed_walks",
+            "stale_candidates",
+            "completed_candidates",
+        )
+        for name in integer_names:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("s-rwalk diagnostic counts must be non-negative")
+        for field in fields(self):
+            if field.name in integer_names:
+                continue
+            value = float(getattr(self, field.name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    "s-rwalk diagnostic values must be finite and non-negative"
+                )
+
+    @property
+    def mean_squared_displacement(self) -> float:
+        if not self.completed_walks:
+            return 0.0
+        return self.total_squared_displacement / self.completed_walks
+
+    @property
+    def stale_candidate_fraction(self) -> float:
+        if not self.completed_candidates:
+            return 0.0
+        return self.stale_candidates / self.completed_candidates
+
+
+@dataclass(frozen=True, slots=True)
 class NISMOResult:
     """Complete immutable output of a fixed-importance NISMO run.
 
@@ -202,6 +258,7 @@ class NISMOResult:
     warnings: tuple[str, ...]
     queue_diagnostics: QueueDiagnostics
     ensemble_move_history: EnsembleMoveHistory | None = None
+    srwalk_diagnostics: SRWalkDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if self.nlive != self.config.n_live:
@@ -220,6 +277,14 @@ class NISMOResult:
         elif self.ensemble_move_history is not None:
             raise ValueError(
                 "ensemble move history is only valid for proposal_scheme='en-rwalk'"
+            )
+        expects_srwalk_diagnostics = (
+            self.config.proposal_scheme == "s-rwalk"
+            and self.config.srwalk_settings.profile
+        )
+        if expects_srwalk_diagnostics != (self.srwalk_diagnostics is not None):
+            raise ValueError(
+                "s-rwalk diagnostics must be present exactly when profiling is enabled"
             )
         ndim = (
             self.final_live_points.shape[1] if self.final_live_points.ndim == 2 else -1

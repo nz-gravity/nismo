@@ -20,6 +20,7 @@ from nismo import (
 from nismo.constrained import BatchEvaluator, passes_constraint
 from nismo.mcmc import (
     RWalkSampler,
+    SRWalkGeometry,
     SRWalkSampler,
     _propose_gaussian_move,
     _propose_stretch_move,
@@ -98,6 +99,11 @@ def test_removed_rwalk_settings_are_not_accepted(kwargs: dict[str, Any]) -> None
         {"covariance_shrinkage": 1.1},
         {"covariance_jitter": 0.0},
         {"covariance_jitter": np.inf},
+        {"covariance_update_interval": 0},
+        {"covariance_update_interval": True},
+        {"covariance_rebuild_interval": 0},
+        {"covariance_rebuild_interval": True},
+        {"profile": 1},
     ],
 )
 def test_srwalk_settings_reject_invalid_values(kwargs: dict[str, Any]) -> None:
@@ -321,6 +327,86 @@ def test_covariance_factor_handles_one_point_and_rank_deficiency() -> None:
     assert rank_deficient.shape == (3, 3)
     assert np.all(np.isfinite(rank_deficient))
     assert np.linalg.matrix_rank(rank_deficient) == 3
+
+
+def test_rolling_srwalk_geometry_matches_full_survivor_covariance() -> None:
+    rng = np.random.default_rng(20260812)
+    live = rng.normal(size=(32, 6))
+    settings = SRWalkSettings(
+        covariance_shrinkage=0.2,
+        covariance_jitter=1.0e-9,
+        covariance_update_interval=1,
+        covariance_rebuild_interval=10_000,
+    )
+    geometry = SRWalkGeometry(live, settings=settings)
+
+    for iteration in range(2_000):
+        worst = iteration % len(live)
+        rolling_factor = geometry.factor_for_worst(live[worst])
+        survivors = np.concatenate((live[:worst], live[worst + 1 :]))
+        direct_factor = covariance_factor(
+            survivors,
+            shrinkage=settings.covariance_shrinkage,
+            jitter=settings.covariance_jitter,
+        )
+        np.testing.assert_allclose(
+            rolling_factor @ rolling_factor.T,
+            direct_factor @ direct_factor.T,
+            rtol=2.0e-10,
+            atol=2.0e-10,
+        )
+
+        outgoing = np.array(live[worst], copy=True)
+        incoming = rng.normal(size=live.shape[1])
+        live[worst] = incoming
+        geometry.commit_replacement(
+            outgoing=outgoing,
+            incoming=incoming,
+            live_theta=live,
+        )
+
+    np.testing.assert_allclose(geometry.mean, np.mean(live, axis=0), atol=2.0e-13)
+    centered = live - np.mean(live, axis=0)
+    np.testing.assert_allclose(
+        geometry.scatter,
+        centered.T @ centered,
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
+
+
+def test_srwalk_geometry_caches_factor_and_periodically_rebuilds() -> None:
+    rng = np.random.default_rng(47)
+    live = rng.normal(size=(8, 3))
+    geometry = SRWalkGeometry(
+        live,
+        settings=SRWalkSettings(
+            covariance_update_interval=3,
+            covariance_rebuild_interval=4,
+            profile=True,
+        ),
+    )
+    first = geometry.factor_for_worst(live[0])
+    assert geometry.factor_for_worst(live[1]) is first
+
+    for index in range(4):
+        worst = index
+        outgoing = np.array(live[worst], copy=True)
+        incoming = rng.normal(size=3)
+        live[worst] = incoming
+        geometry.commit_replacement(
+            outgoing=outgoing,
+            incoming=incoming,
+            live_theta=live,
+        )
+        geometry.factor_for_worst(live[(worst + 1) % len(live)])
+
+    assert geometry.n_updates == 4
+    assert geometry.n_rebuilds == 1
+    assert geometry.n_factorizations == 2
+    assert geometry.update_seconds >= 0.0
+    assert geometry.rebuild_seconds >= 0.0
+    assert geometry.factorization_seconds >= 0.0
 
 
 def test_dynesty_ellipsoid_contains_rank_deficient_live_points() -> None:
@@ -677,6 +763,150 @@ def test_srwalk_uses_frozen_survivor_covariance_and_can_stay_put(
     assert attempt.n_moved == 0
     assert attempt.n_completed == 7
     assert sampler.scale == pytest.approx(np.exp(-1.0))
+
+
+def test_srwalk_batches_gaussian_increment_linear_algebra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluator, theta, log_likelihood, log_prior, log_q0, log_psi0, ties = (
+        _all_rejected_problem()
+    )
+
+    class CountingGenerator:
+        def __init__(self) -> None:
+            self.normal_calls = 0
+
+        def choice(self, values: NDArray[np.int64]) -> int:
+            return int(values[0])
+
+        def standard_normal(self, *, size: tuple[int, int]) -> NDArray[np.float64]:
+            self.normal_calls += 1
+            assert size == (7, 1)
+            return np.ones(size)
+
+        def random(self) -> float:
+            return 0.5
+
+    monkeypatch.setattr(
+        "nismo.mcmc.covariance_factor",
+        lambda *args, **kwargs: np.ones((1, 1)),
+    )
+    rng = CountingGenerator()
+    attempt = draw_srwalk_constrained(
+        evaluator=evaluator,
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=log_prior,
+        live_log_q0=log_q0,
+        live_log_psi0=log_psi0,
+        live_tie_breakers=ties,
+        worst=0,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        sampler=SRWalkSampler(settings=SRWalkSettings(n_steps=7), ndim=1),
+        rng=rng,  # type: ignore[arg-type]
+        max_proposals=7,
+        max_likelihood_calls=None,
+        deadline=None,
+    )
+    assert attempt.draw is not None
+    assert rng.normal_calls == 1
+    assert attempt.n_completed == 7
+
+
+def test_srwalk_uses_prepared_snapshot_factor_without_recomputing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluator, theta, log_likelihood, log_prior, log_q0, log_psi0, ties = (
+        _all_rejected_problem()
+    )
+
+    def fail_covariance(*args: Any, **kwargs: Any) -> NDArray[np.float64]:
+        raise AssertionError("worker recomputed prepared covariance")
+
+    monkeypatch.setattr("nismo.mcmc.covariance_factor", fail_covariance)
+    attempt = draw_srwalk_constrained(
+        evaluator=evaluator,
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=log_prior,
+        live_log_q0=log_q0,
+        live_log_psi0=log_psi0,
+        live_tie_breakers=ties,
+        worst=0,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        sampler=SRWalkSampler(settings=SRWalkSettings(n_steps=4), ndim=1),
+        rng=np.random.default_rng(199),
+        max_proposals=4,
+        max_likelihood_calls=None,
+        deadline=None,
+        proposal_factor=np.ones((1, 1)),
+    )
+    assert attempt.draw is not None
+    assert attempt.n_completed == 4
+
+
+def test_srwalk_prior_rejections_do_not_consume_likelihood_budget() -> None:
+    class UniformBox:
+        ndim = 1
+
+        def log_prob(self, theta: NDArray[np.float64]) -> NDArray[np.float64]:
+            return np.where(
+                (theta[:, 0] >= 0.0) & (theta[:, 0] <= 1.0),
+                0.0,
+                -np.inf,
+            )
+
+    class OutsideGenerator:
+        def choice(self, values: NDArray[np.int64]) -> int:
+            return int(values[0])
+
+        def standard_normal(self, *, size: tuple[int, int]) -> NDArray[np.float64]:
+            return np.ones(size)
+
+        def random(self) -> float:
+            return 0.5
+
+    proposal = UniformBox()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda theta: theta[:, 0],
+        log_prior_fn=proposal.log_prob,
+    )
+    theta = np.array([[0.1], [0.2], [0.3]])
+    log_likelihood = theta[:, 0]
+    evaluator = BatchEvaluator(model, proposal)
+    attempt = draw_srwalk_constrained(
+        evaluator=evaluator,
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=np.zeros(3),
+        live_log_q0=np.zeros(3),
+        live_log_psi0=log_likelihood,
+        live_tie_breakers=np.zeros(3),
+        worst=0,
+        threshold=0.1,
+        threshold_tie_breaker=0.0,
+        tie_policy="strict",
+        sampler=SRWalkSampler(
+            settings=SRWalkSettings(n_steps=3, scale=1.0),
+            ndim=1,
+        ),
+        rng=OutsideGenerator(),  # type: ignore[arg-type]
+        max_proposals=3,
+        max_likelihood_calls=0,
+        deadline=None,
+        proposal_factor=np.array([[10.0]]),
+    )
+    assert attempt.draw is not None
+    assert attempt.n_proposed == 3
+    assert attempt.n_completed == 3
+    assert evaluator.n_prior_calls == 3
+    assert evaluator.n_likelihood_calls == 0
 
 
 class _ScriptedGenerator:

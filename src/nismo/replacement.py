@@ -52,6 +52,7 @@ class ReplacementSnapshot:
     live_log_psi0: NDArray[np.float64]
     live_tie_breakers: NDArray[np.float64]
     proposal_revision: int
+    srwalk_factor: NDArray[np.float64] | None = None
 
     def __post_init__(self) -> None:
         theta = _readonly_float(self.live_theta)
@@ -74,6 +75,12 @@ class ReplacementSnapshot:
             object.__setattr__(self, name, array)
         if self.proposal_revision < 0:
             raise ValueError("proposal_revision must be non-negative")
+        if self.srwalk_factor is not None:
+            factor = _readonly_float(self.srwalk_factor)
+            ndim = theta.shape[1]
+            if factor.shape != (ndim, ndim):
+                raise ValueError("srwalk_factor must have shape (ndim, ndim)")
+            object.__setattr__(self, "srwalk_factor", factor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +91,19 @@ class EvaluationCounts:
     prior_calls: int = 0
     outside_prior: int = 0
     zero_likelihood: int = 0
+    likelihood_seconds: float = 0.0
+    prior_seconds: float = 0.0
+    q0_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         for field in fields(self):
             value = getattr(self, field.name)
+            if field.name.endswith("_seconds"):
+                if not np.isfinite(value) or value < 0.0:
+                    raise ValueError(
+                        "evaluation timings must be finite and non-negative"
+                    )
+                continue
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError("evaluation counts must be non-negative integers")
 
@@ -98,6 +114,9 @@ class EvaluationCounts:
             prior_calls=evaluator.n_prior_calls,
             outside_prior=evaluator.outside_prior,
             zero_likelihood=evaluator.zero_likelihood,
+            likelihood_seconds=evaluator.likelihood_seconds,
+            prior_seconds=evaluator.prior_seconds,
+            q0_seconds=evaluator.q0_seconds,
         )
 
 
@@ -270,6 +289,7 @@ def prepare_replacement_snapshot(
     live_log_psi0: NDArray[np.float64],
     live_tie_breakers: NDArray[np.float64],
     proposal_revision: int,
+    srwalk_factor: NDArray[np.float64] | None = None,
 ) -> ReplacementSnapshot:
     """Copy authoritative coordinator state into a read-only worker snapshot."""
     return ReplacementSnapshot(
@@ -283,13 +303,21 @@ def prepare_replacement_snapshot(
         live_log_psi0=live_log_psi0,
         live_tie_breakers=live_tie_breakers,
         proposal_revision=proposal_revision,
+        srwalk_factor=srwalk_factor,
     )
 
 
 def build_replacement(job: ReplacementJob) -> ReplacementResult:
     """Construct one complete replacement without mutating coordinator state."""
     rng = np.random.default_rng(np.random.SeedSequence(job.seed_entropy))
-    evaluator = BatchEvaluator(job.model, job.importance_morph)
+    evaluator = BatchEvaluator(
+        job.model,
+        job.importance_morph,
+        profile=(
+            job.config.proposal_scheme == "s-rwalk"
+            and job.config.srwalk_settings.profile
+        ),
+    )
     snapshot = job.snapshot
     config = job.config
     proposal_scale: float | None = None
@@ -358,6 +386,7 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
             max_proposals=config.max_proposals_per_replacement,
             max_likelihood_calls=job.max_likelihood_calls,
             deadline=job.deadline,
+            proposal_factor=snapshot.srwalk_factor,
         )
     elif config.proposal_scheme == "en-rwalk":
         attempt = draw_ensemble_rwalk_constrained(

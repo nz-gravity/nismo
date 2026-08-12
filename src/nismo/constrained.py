@@ -97,6 +97,13 @@ class ConstrainedAttempt:
     n_moved: int = 0
     n_completed: int = 0
     ensemble_move_stats: tuple[EnsembleMoveStats, ...] = ()
+    srwalk_factorization_seconds: float = 0.0
+    srwalk_proposal_seconds: float = 0.0
+    srwalk_squared_displacement: float = 0.0
+
+
+class LikelihoodBudgetExhausted(RuntimeError):
+    """Internal signal that a finite-prior point needs one unavailable call."""
 
 
 def passes_constraint(
@@ -135,7 +142,13 @@ class BatchEvaluator:
     function invocations, including vectorized batches.
     """
 
-    def __init__(self, model: Model, importance_morph: Proposal) -> None:
+    def __init__(
+        self,
+        model: Model,
+        importance_morph: Proposal,
+        *,
+        profile: bool = False,
+    ) -> None:
         if model.ndim != importance_morph.ndim:
             raise ValueError(
                 f"model ndim {model.ndim} does not match importance Morph ndim "
@@ -148,6 +161,65 @@ class BatchEvaluator:
         self.n_prior_calls = 0
         self.outside_prior = 0
         self.zero_likelihood = 0
+        self.profile = bool(profile)
+        self.prior_seconds = 0.0
+        self.likelihood_seconds = 0.0
+        self.q0_seconds = 0.0
+
+    def _log_prior(
+        self,
+        points: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        start = time.perf_counter() if self.profile else 0.0
+        trusted = getattr(self.model, "_log_prior_validated", None)
+        if callable(trusted):
+            values = trusted(points)
+        else:
+            values = np.asarray(self.model.log_prior(points), dtype=float)
+        if self.profile:
+            self.prior_seconds += time.perf_counter() - start
+        return np.asarray(values, dtype=float)
+
+    def _log_likelihood(
+        self,
+        points: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        start = time.perf_counter() if self.profile else 0.0
+        trusted = getattr(self.model, "_log_likelihood_validated", None)
+        if callable(trusted):
+            values = trusted(points)
+        else:
+            values = np.asarray(self.model.log_likelihood(points), dtype=float)
+        if self.profile:
+            self.likelihood_seconds += time.perf_counter() - start
+        return np.asarray(values, dtype=float)
+
+    def _log_q0(
+        self,
+        points: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        start = time.perf_counter() if self.profile else 0.0
+        values = np.asarray(self.importance_morph.log_prob(points), dtype=float)
+        if self.profile:
+            self.q0_seconds += time.perf_counter() - start
+        return values
+
+    @staticmethod
+    def _validate_values(
+        name: str,
+        values: NDArray[np.float64],
+        *,
+        expected: int,
+        error_type: type[InvalidModelOutput] | type[InvalidProposalOutput],
+    ) -> None:
+        if values.shape != (expected,):
+            raise error_type(
+                f"{name} must return shape ({expected},), got {values.shape}"
+            )
+        if np.any(np.isnan(values)):
+            raise error_type(f"{name} returned NaN")
+        if np.any(np.isposinf(values)):
+            raise error_type(f"{name} returned +infinity")
 
     def evaluate(self, theta: NDArray[np.float64]) -> EvaluatedBatch:
         """Evaluate and validate an ``(n, ndim)`` batch.
@@ -158,35 +230,49 @@ class BatchEvaluator:
         """
         points = validate_points(theta, self.ndim)
         n_points = len(points)
-        log_likelihood = np.asarray(self.model.log_likelihood(points), dtype=float)
-        self.n_likelihood_calls += n_points
-        log_prior = np.asarray(self.model.log_prior(points), dtype=float)
+        log_prior = self._log_prior(points)
         self.n_prior_calls += n_points
-        log_q0 = np.asarray(self.importance_morph.log_prob(points), dtype=float)
+        self._validate_values(
+            "log_prior",
+            log_prior,
+            expected=n_points,
+            error_type=InvalidModelOutput,
+        )
 
-        for name, values, error_type in (
-            ("log_likelihood", log_likelihood, InvalidModelOutput),
-            ("log_prior", log_prior, InvalidModelOutput),
-            ("log_q0", log_q0, InvalidProposalOutput),
-        ):
-            if values.shape != (n_points,):
-                raise error_type(
-                    f"{name} must return shape ({n_points},), got {values.shape}"
-                )
-            if np.any(np.isnan(values)):
-                raise error_type(f"{name} returned NaN")
-            if np.any(np.isposinf(values)):
-                raise error_type(f"{name} returned +infinity")
+        inside_prior = np.isfinite(log_prior)
+        likelihood_indices = np.flatnonzero(inside_prior)
+        log_likelihood = np.full(n_points, -np.inf, dtype=float)
+        if len(likelihood_indices):
+            evaluated_likelihood = self._log_likelihood(points[likelihood_indices])
+            self.n_likelihood_calls += len(likelihood_indices)
+            self._validate_values(
+                "log_likelihood",
+                evaluated_likelihood,
+                expected=len(likelihood_indices),
+                error_type=InvalidModelOutput,
+            )
+            log_likelihood[likelihood_indices] = evaluated_likelihood
 
         numerator = log_likelihood + log_prior
         finite_numerator = np.isfinite(numerator)
-        support_failure = finite_numerator & np.isneginf(log_q0)
-        if np.any(support_failure):
-            first = int(np.flatnonzero(support_failure)[0])
-            raise ProposalSupportError(
-                "proposal support failure: finite log_likelihood + log_prior "
-                f"with log_q0 == -inf at batch row {first}"
+        q0_indices = np.flatnonzero(finite_numerator)
+        log_q0 = np.full(n_points, -np.inf, dtype=float)
+        if len(q0_indices):
+            evaluated_q0 = self._log_q0(points[q0_indices])
+            self._validate_values(
+                "log_q0",
+                evaluated_q0,
+                expected=len(q0_indices),
+                error_type=InvalidProposalOutput,
             )
+            log_q0[q0_indices] = evaluated_q0
+            support_failure = np.isneginf(evaluated_q0)
+            if np.any(support_failure):
+                first = int(q0_indices[np.flatnonzero(support_failure)[0]])
+                raise ProposalSupportError(
+                    "proposal support failure: finite log_likelihood + log_prior "
+                    f"with log_q0 == -inf at batch row {first}"
+                )
 
         log_psi0 = np.full(n_points, -np.inf, dtype=float)
         valid = finite_numerator & np.isfinite(log_q0)
@@ -195,7 +281,9 @@ class BatchEvaluator:
             raise InvalidModelOutput("log_psi0 is NaN or +infinity")
 
         self.outside_prior += int(np.count_nonzero(np.isneginf(log_prior)))
-        self.zero_likelihood += int(np.count_nonzero(np.isneginf(log_likelihood)))
+        self.zero_likelihood += int(
+            np.count_nonzero(np.isneginf(log_likelihood[likelihood_indices]))
+        )
         return EvaluatedBatch(
             theta=points,
             log_likelihood=log_likelihood,
@@ -207,41 +295,53 @@ class BatchEvaluator:
     def evaluate_one(
         self,
         theta: NDArray[np.float64],
+        *,
+        max_likelihood_calls: int | None = None,
     ) -> tuple[NDArray[np.float64], float, float, float, float]:
-        """Evaluate and validate one ``(ndim,)`` point with minimal overhead."""
+        """Evaluate one point, rejecting outside-prior points before likelihood."""
         points = validate_points(theta, self.ndim)
         if len(points) != 1:
             raise InvalidModelOutput("evaluate_one requires exactly one point")
 
-        log_likelihood_values = np.asarray(
-            self.model.log_likelihood(points),
-            dtype=float,
-        )
-        self.n_likelihood_calls += 1
-        log_prior_values = np.asarray(self.model.log_prior(points), dtype=float)
+        log_prior_values = self._log_prior(points)
         self.n_prior_calls += 1
-        log_q0_values = np.asarray(self.importance_morph.log_prob(points), dtype=float)
-
-        for name, values, error_type in (
-            ("log_likelihood", log_likelihood_values, InvalidModelOutput),
-            ("log_prior", log_prior_values, InvalidModelOutput),
-            ("log_q0", log_q0_values, InvalidProposalOutput),
-        ):
-            if values.shape != (1,):
-                raise error_type(f"{name} must return shape (1,), got {values.shape}")
-
-        log_likelihood = float(log_likelihood_values[0])
+        self._validate_values(
+            "log_prior",
+            log_prior_values,
+            expected=1,
+            error_type=InvalidModelOutput,
+        )
         log_prior = float(log_prior_values[0])
-        log_q0 = float(log_q0_values[0])
-        for name, value, error_type in (
-            ("log_likelihood", log_likelihood, InvalidModelOutput),
-            ("log_prior", log_prior, InvalidModelOutput),
-            ("log_q0", log_q0, InvalidProposalOutput),
+        if np.isneginf(log_prior):
+            self.outside_prior += 1
+            return points[0], -np.inf, log_prior, -np.inf, -np.inf
+
+        if (
+            max_likelihood_calls is not None
+            and self.n_likelihood_calls >= max_likelihood_calls
         ):
-            if np.isnan(value):
-                raise error_type(f"{name} returned NaN")
-            if np.isposinf(value):
-                raise error_type(f"{name} returned +infinity")
+            raise LikelihoodBudgetExhausted
+        log_likelihood_values = self._log_likelihood(points)
+        self.n_likelihood_calls += 1
+        self._validate_values(
+            "log_likelihood",
+            log_likelihood_values,
+            expected=1,
+            error_type=InvalidModelOutput,
+        )
+        log_likelihood = float(log_likelihood_values[0])
+        if np.isneginf(log_likelihood):
+            self.zero_likelihood += 1
+            return points[0], log_likelihood, log_prior, -np.inf, -np.inf
+
+        log_q0_values = self._log_q0(points)
+        self._validate_values(
+            "log_q0",
+            log_q0_values,
+            expected=1,
+            error_type=InvalidProposalOutput,
+        )
+        log_q0 = float(log_q0_values[0])
 
         numerator = log_likelihood + log_prior
         if np.isfinite(numerator) and np.isneginf(log_q0):
@@ -257,8 +357,6 @@ class BatchEvaluator:
         if np.isnan(log_psi0) or np.isposinf(log_psi0):
             raise InvalidModelOutput("log_psi0 is NaN or +infinity")
 
-        self.outside_prior += int(np.isneginf(log_prior))
-        self.zero_likelihood += int(np.isneginf(log_likelihood))
         return points[0], log_likelihood, log_prior, log_q0, log_psi0
 
 

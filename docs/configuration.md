@@ -66,11 +66,27 @@ settings = SRWalkSettings(
     facc=0.5,
     covariance_shrinkage=0.1,
     covariance_jitter=1e-10,
+    covariance_update_interval=1,
+    covariance_rebuild_interval=None,
+    profile=False,
 )
 ```
 
-The survivor covariance is regularized and frozen for one replacement.
+The live-set mean and scatter are computed once and updated in `O(ndim**2)`
+after each committed replacement. The survivor covariance uses a Cholesky
+factor when possible and is frozen for a complete chain. A queued refill shares
+one prepared factor across all its jobs.
+
+`covariance_update_interval` controls how many committed replacements may reuse
+a factor; its default of one refreshes at every serial replacement or queue
+snapshot. `covariance_rebuild_interval=None` reconstructs mean and scatter from
+the complete live set every `n_live` commits to limit floating-point drift.
 `scale=None` starts at `2.38 / sqrt(ndim)` and then adapts toward `facc`.
+
+Set `profile=True` to populate `result.srwalk_diagnostics` with component
+timings, factor refresh counts, squared displacement, and stale-candidate
+fraction. Profiling is opt-in because high-resolution timers add overhead to
+cheap likelihoods.
 
 ### Ensemble random walk
 

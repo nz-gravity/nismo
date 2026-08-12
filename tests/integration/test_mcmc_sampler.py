@@ -224,3 +224,58 @@ def test_rwalk_default_uses_ndim_plus_twenty_walks() -> None:
     assert result.niter == 1
     assert result.n_proposals == 21
     assert result.history.mcmc_completed[0] == 21
+
+
+def test_srwalk_profiling_reports_rolling_geometry_and_component_timings() -> None:
+    model, proposal = _constant_problem()
+    result = NISMOSampler(
+        model=model,
+        importance_morph=proposal,
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(
+            n_steps=4,
+            covariance_update_interval=3,
+            covariance_rebuild_interval=5,
+            profile=True,
+        ),
+        n_live=10,
+        rng=190,
+        tie_policy="randomized_plateau",
+    ).run(
+        dlogz=0.5,
+        max_iterations=100,
+        max_proposals_per_replacement=20,
+    )
+    diagnostics = result.srwalk_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.geometry_updates == result.niter
+    assert diagnostics.geometry_rebuilds == result.niter // 5
+    assert diagnostics.factor_refreshes == 4
+    assert diagnostics.completed_walks == result.niter
+    assert diagnostics.completed_candidates == result.niter
+    assert diagnostics.stale_candidates == 0
+    assert diagnostics.factorization_seconds >= 0.0
+    assert diagnostics.proposal_linear_algebra_seconds >= 0.0
+    assert diagnostics.prior_seconds >= 0.0
+    assert diagnostics.likelihood_seconds >= 0.0
+    assert diagnostics.q0_seconds >= 0.0
+    assert diagnostics.mean_squared_displacement >= 0.0
+    assert diagnostics.stale_candidate_fraction == 0.0
+
+
+def test_srwalk_diagnostics_are_opt_in() -> None:
+    model, proposal = _constant_problem()
+    result = NISMOSampler(
+        model=model,
+        importance_morph=proposal,
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(n_steps=4),
+        n_live=10,
+        rng=191,
+        tie_policy="randomized_plateau",
+    ).run(
+        dlogz=0.5,
+        max_iterations=100,
+        max_proposals_per_replacement=20,
+    )
+    assert result.srwalk_diagnostics is None

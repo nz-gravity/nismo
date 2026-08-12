@@ -192,6 +192,8 @@ example with `NISMOSampler(..., n_workers=8, queue_size=8)`.
 - likelihood, prior, importance-density, transformed-integrand, and quadrature
   arrays;
 - per-iteration stopping, acceptance, cost, MCMC, and queue histories;
+- optional `s-rwalk` component timings through
+  `SRWalkSettings(profile=True)` and `result.srwalk_diagnostics`;
 - reproducibility metadata and the initial and final random-number-generator
   states.
 

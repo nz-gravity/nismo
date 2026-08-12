@@ -165,6 +165,9 @@ class SRWalkSettings:
     facc: float = 0.5
     covariance_shrinkage: float = 0.1
     covariance_jitter: float = 1.0e-10
+    covariance_update_interval: int = 1
+    covariance_rebuild_interval: int | None = None
+    profile: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -195,6 +198,25 @@ class SRWalkSettings:
                 name="s-rwalk covariance_jitter",
             ),
         )
+        object.__setattr__(
+            self,
+            "covariance_update_interval",
+            _positive_integer(
+                self.covariance_update_interval,
+                name="s-rwalk covariance_update_interval",
+            ),
+        )
+        if self.covariance_rebuild_interval is not None:
+            object.__setattr__(
+                self,
+                "covariance_rebuild_interval",
+                _positive_integer(
+                    self.covariance_rebuild_interval,
+                    name="s-rwalk covariance_rebuild_interval",
+                ),
+            )
+        if not isinstance(self.profile, bool):
+            raise ConfigurationError("s-rwalk profile must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)

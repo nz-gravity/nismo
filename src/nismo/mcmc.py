@@ -36,6 +36,7 @@ from .constrained import (
     EnsembleMoveStats,
     EvaluatedBatch,
     EvaluatedPoint,
+    LikelihoodBudgetExhausted,
     passes_constraint,
 )
 from .exceptions import ConfigurationError, NumericalInvariantError
@@ -327,33 +328,176 @@ def covariance_factor(
     denominator = max(values.shape[0] - 1, 1)
     with np.errstate(over="ignore", invalid="ignore"):
         covariance = (centered.T @ centered) / denominator
-        diagonal = np.diag(np.diag(covariance))
-        regularized = (
-            (1.0 - shrinkage) * covariance
-            + shrinkage * diagonal
-            + jitter * np.eye(values.shape[1])
-        )
+    return _factor_empirical_covariance(
+        covariance,
+        shrinkage=shrinkage,
+        jitter=jitter,
+    )
+
+
+def _factor_empirical_covariance(
+    covariance: NDArray[np.float64],
+    *,
+    shrinkage: float,
+    jitter: float,
+) -> NDArray[np.float64]:
+    """Regularize and factor an empirical covariance with Cholesky first."""
+    values = np.asarray(covariance, dtype=float)
+    if values.ndim != 2 or values.shape[0] != values.shape[1] or not len(values):
+        raise NumericalInvariantError("proposal covariance must be a nonempty square")
+    with np.errstate(over="ignore", invalid="ignore"):
+        regularized = (1.0 - shrinkage) * values
+        diagonal_indices = np.diag_indices_from(regularized)
+        regularized[diagonal_indices] = np.diag(values) + jitter
     if not np.all(np.isfinite(regularized)):
         raise NumericalInvariantError(
             "a finite regularized live-set covariance could not be formed"
         )
     regularized = 0.5 * (regularized + regularized.T)
     try:
-        eigenvalues, eigenvectors = np.linalg.eigh(regularized)
-    except np.linalg.LinAlgError as error:
-        raise NumericalInvariantError(
-            "regularized live-set covariance eigendecomposition failed"
-        ) from error
-    eigenvalues = np.maximum(eigenvalues, jitter)
-    factor: NDArray[np.float64] = np.asarray(
-        eigenvectors * np.sqrt(eigenvalues)[np.newaxis, :],
-        dtype=float,
-    )
+        factor = np.linalg.cholesky(regularized)
+    except np.linalg.LinAlgError:
+        try:
+            eigenvalues, eigenvectors = np.linalg.eigh(regularized)
+        except np.linalg.LinAlgError as eigen_error:
+            raise NumericalInvariantError(
+                "regularized live-set covariance factorization failed"
+            ) from eigen_error
+        eigenvalues = np.maximum(eigenvalues, jitter)
+        factor = eigenvectors * np.sqrt(eigenvalues)[np.newaxis, :]
     if not np.all(np.isfinite(factor)):
         raise NumericalInvariantError(
             "a finite regularized live-set covariance factor could not be formed"
         )
-    return factor
+    return np.asarray(factor, dtype=float)
+
+
+def _mean_and_scatter(
+    points: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    values = np.asarray(points, dtype=float)
+    if values.ndim != 2 or values.shape[0] < 2 or values.shape[1] < 1:
+        raise NumericalInvariantError(
+            "rolling s-rwalk geometry requires at least two live points"
+        )
+    if not np.all(np.isfinite(values)):
+        raise NumericalInvariantError(
+            "rolling s-rwalk geometry cannot contain nonfinite live points"
+        )
+    mean = np.mean(values, axis=0)
+    centered = values - mean
+    scatter = centered.T @ centered
+    return np.asarray(mean, dtype=float), np.asarray(scatter, dtype=float)
+
+
+class SRWalkGeometry:
+    """Rolling live-set covariance and cached factor for ``s-rwalk``.
+
+    The full live-set mean and scatter are updated with one remove/add pair per
+    committed replacement. A survivor covariance is obtained by downdating the
+    discarded point in :math:`O(d^2)`. The factor may be reused for several
+    replacements because a frozen symmetric Gaussian proposal remains valid.
+    """
+
+    def __init__(
+        self,
+        live_theta: NDArray[np.float64],
+        *,
+        settings: SRWalkSettings,
+    ) -> None:
+        self.n_live = len(live_theta)
+        self.ndim = live_theta.shape[1]
+        self.shrinkage = settings.covariance_shrinkage
+        self.jitter = settings.covariance_jitter
+        self.update_interval = settings.covariance_update_interval
+        self.rebuild_interval = (
+            self.n_live
+            if settings.covariance_rebuild_interval is None
+            else settings.covariance_rebuild_interval
+        )
+        self.profile = settings.profile
+        self.mean, self.scatter = _mean_and_scatter(live_theta)
+        self._factor: NDArray[np.float64] | None = None
+        self._updates_since_factor = self.update_interval
+        self._updates_since_rebuild = 0
+        self.n_updates = 0
+        self.n_rebuilds = 0
+        self.n_factorizations = 0
+        self.update_seconds = 0.0
+        self.rebuild_seconds = 0.0
+        self.factorization_seconds = 0.0
+
+    def factor_for_worst(
+        self,
+        worst_theta: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Return the current cached factor, refreshing at its configured cadence."""
+        if (
+            self._factor is not None
+            and self._updates_since_factor < self.update_interval
+        ):
+            return self._factor
+        start = time.perf_counter() if self.profile else 0.0
+        survivor_count = self.n_live - 1
+        survivor_mean = (
+            self.n_live * self.mean - np.asarray(worst_theta, dtype=float)
+        ) / survivor_count
+        survivor_scatter = self.scatter - np.outer(
+            np.asarray(worst_theta, dtype=float) - self.mean,
+            np.asarray(worst_theta, dtype=float) - survivor_mean,
+        )
+        survivor_scatter = 0.5 * (survivor_scatter + survivor_scatter.T)
+        covariance = survivor_scatter / max(survivor_count - 1, 1)
+        factor = _factor_empirical_covariance(
+            covariance,
+            shrinkage=self.shrinkage,
+            jitter=self.jitter,
+        )
+        factor.setflags(write=False)
+        self._factor = factor
+        self._updates_since_factor = 0
+        self.n_factorizations += 1
+        if self.profile:
+            self.factorization_seconds += time.perf_counter() - start
+        return factor
+
+    def commit_replacement(
+        self,
+        *,
+        outgoing: NDArray[np.float64],
+        incoming: NDArray[np.float64],
+        live_theta: NDArray[np.float64],
+    ) -> None:
+        """Update geometry after exactly one authoritative live-set commit."""
+        start = time.perf_counter() if self.profile else 0.0
+        outgoing_values = np.asarray(outgoing, dtype=float)
+        incoming_values = np.asarray(incoming, dtype=float)
+        survivor_count = self.n_live - 1
+        survivor_mean = (self.n_live * self.mean - outgoing_values) / survivor_count
+        survivor_scatter = self.scatter - np.outer(
+            outgoing_values - self.mean,
+            outgoing_values - survivor_mean,
+        )
+        new_mean = survivor_mean + (incoming_values - survivor_mean) / self.n_live
+        new_scatter = survivor_scatter + np.outer(
+            incoming_values - survivor_mean,
+            incoming_values - new_mean,
+        )
+        self.mean = np.asarray(new_mean, dtype=float)
+        self.scatter = np.asarray(0.5 * (new_scatter + new_scatter.T), dtype=float)
+        self.n_updates += 1
+        self._updates_since_factor += 1
+        self._updates_since_rebuild += 1
+        if self.profile:
+            self.update_seconds += time.perf_counter() - start
+
+        if self._updates_since_rebuild >= self.rebuild_interval:
+            rebuild_start = time.perf_counter() if self.profile else 0.0
+            self.mean, self.scatter = _mean_and_scatter(live_theta)
+            self._updates_since_rebuild = 0
+            self.n_rebuilds += 1
+            if self.profile:
+                self.rebuild_seconds += time.perf_counter() - rebuild_start
 
 
 def log_q0_acceptance_ratio(
@@ -681,6 +825,7 @@ def draw_srwalk_constrained(
     max_proposals: int,
     max_likelihood_calls: int | None,
     deadline: float | None,
+    proposal_factor: NDArray[np.float64] | None = None,
 ) -> ConstrainedAttempt:
     """Evolve a survivor with Gaussian MH targeting constrained fixed ``q0``.
 
@@ -702,7 +847,9 @@ def draw_srwalk_constrained(
         evaluator=evaluator,
         required_proposals=sampler.n_steps,
         max_proposals=max_proposals,
-        max_likelihood_calls=max_likelihood_calls,
+        # Prior-first evaluation makes this an upper bound rather than an
+        # exact likelihood-call requirement. The loop enforces the hard limit.
+        max_likelihood_calls=None,
         deadline=deadline,
     )
     if failure is not None:
@@ -717,14 +864,29 @@ def draw_srwalk_constrained(
     )
     if len(eligible) == 0:
         return ConstrainedAttempt(None, "insufficient_eligible_survivors", 0, 0)
-    survivors = np.delete(live_theta, worst, axis=0)
-    factor = covariance_factor(
-        survivors,
-        shrinkage=sampler.covariance_shrinkage,
-        jitter=sampler.covariance_jitter,
+    factorization_start = time.perf_counter() if evaluator.profile else 0.0
+    if proposal_factor is None:
+        survivors = np.concatenate((live_theta[:worst], live_theta[worst + 1 :]))
+        factor = covariance_factor(
+            survivors,
+            shrinkage=sampler.covariance_shrinkage,
+            jitter=sampler.covariance_jitter,
+        )
+    else:
+        factor = np.asarray(proposal_factor, dtype=float)
+        if factor.shape != (evaluator.ndim, evaluator.ndim):
+            raise NumericalInvariantError("prepared s-rwalk factor has the wrong shape")
+        if not np.all(np.isfinite(factor)):
+            raise NumericalInvariantError(
+                "prepared s-rwalk factor contains NaN or infinity"
+            )
+    factorization_seconds = (
+        time.perf_counter() - factorization_start
+        if evaluator.profile and proposal_factor is None
+        else 0.0
     )
     start_index = int(rng.choice(eligible))
-    current = _point_from_live(
+    starting = _point_from_live(
         start_index,
         live_theta=live_theta,
         live_log_likelihood=live_log_likelihood,
@@ -734,11 +896,24 @@ def draw_srwalk_constrained(
         live_tie_breakers=live_tie_breakers,
     )
     scale = sampler.scale
+    proposal_start = time.perf_counter() if evaluator.profile else 0.0
+    standard_normals = rng.standard_normal(size=(sampler.n_steps, evaluator.ndim))
+    increments = scale * (standard_normals @ factor.T)
+    proposal_seconds = (
+        time.perf_counter() - proposal_start if evaluator.profile else 0.0
+    )
+    current_theta = starting.theta
+    current_log_likelihood = starting.log_likelihood
+    current_log_prior = starting.log_prior
+    current_log_q0 = starting.log_q0
+    current_log_psi0 = starting.log_psi0
+    current_tie_breaker = starting.tie_breaker
     n_proposed = 0
     n_valid = 0
     n_accepted = 0
     moved = False
-    for _ in range(sampler.n_steps):
+    n_completed = 0
+    for increment in increments:
         if deadline is not None and time.monotonic() >= deadline:
             return ConstrainedAttempt(
                 None,
@@ -747,19 +922,41 @@ def draw_srwalk_constrained(
                 n_valid,
                 n_accepted,
                 int(moved),
-                n_proposed,
+                n_completed,
+                srwalk_factorization_seconds=factorization_seconds,
+                srwalk_proposal_seconds=proposal_seconds,
+                srwalk_squared_displacement=float(
+                    np.sum((current_theta - starting.theta) ** 2)
+                ),
             )
-        proposal = current.theta + scale * (
-            factor @ rng.standard_normal(evaluator.ndim)
-        )
-        (
-            proposal_theta,
-            proposal_log_likelihood,
-            proposal_log_prior,
-            proposal_log_q0,
-            proposal_log_psi0,
-        ) = evaluator.evaluate_one(proposal)
+        proposal = current_theta + increment
         n_proposed += 1
+        try:
+            (
+                proposal_theta,
+                proposal_log_likelihood,
+                proposal_log_prior,
+                proposal_log_q0,
+                proposal_log_psi0,
+            ) = evaluator.evaluate_one(
+                proposal,
+                max_likelihood_calls=max_likelihood_calls,
+            )
+        except LikelihoodBudgetExhausted:
+            return ConstrainedAttempt(
+                None,
+                "max_likelihood_calls",
+                n_proposed,
+                n_valid,
+                n_accepted,
+                int(moved),
+                n_completed,
+                srwalk_factorization_seconds=factorization_seconds,
+                srwalk_proposal_seconds=proposal_seconds,
+                srwalk_squared_displacement=float(
+                    np.sum((current_theta - starting.theta) ** 2)
+                ),
+            )
         proposed_tie = float(rng.random())
         valid = bool(
             passes_constraint(
@@ -771,23 +968,31 @@ def draw_srwalk_constrained(
             )
         )
         if not valid:
+            n_completed += 1
             continue
         n_valid += 1
         if accepts_log_q0_metropolis(
-            current_log_q0=current.log_q0,
+            current_log_q0=current_log_q0,
             proposed_log_q0=proposal_log_q0,
             rng=rng,
         ):
-            current = EvaluatedPoint(
-                theta=proposal_theta,
-                log_likelihood=proposal_log_likelihood,
-                log_prior=proposal_log_prior,
-                log_q0=proposal_log_q0,
-                log_psi0=proposal_log_psi0,
-                tie_breaker=proposed_tie,
-            )
+            current_theta = proposal_theta
+            current_log_likelihood = proposal_log_likelihood
+            current_log_prior = proposal_log_prior
+            current_log_q0 = proposal_log_q0
+            current_log_psi0 = proposal_log_psi0
+            current_tie_breaker = proposed_tie
             n_accepted += 1
             moved = True
+        n_completed += 1
+    current = EvaluatedPoint(
+        theta=np.array(current_theta, copy=True),
+        log_likelihood=current_log_likelihood,
+        log_prior=current_log_prior,
+        log_q0=current_log_q0,
+        log_psi0=current_log_psi0,
+        tie_breaker=current_tie_breaker,
+    )
     draw = ConstrainedDraw(current, n_proposed, n_valid)
     sampler.record_completed_walk(accept=n_accepted, scale=scale)
     return ConstrainedAttempt(
@@ -798,6 +1003,11 @@ def draw_srwalk_constrained(
         n_accepted,
         int(moved),
         sampler.n_steps,
+        srwalk_factorization_seconds=factorization_seconds,
+        srwalk_proposal_seconds=proposal_seconds,
+        srwalk_squared_displacement=float(
+            np.sum((current_theta - starting.theta) ** 2)
+        ),
     )
 
 
