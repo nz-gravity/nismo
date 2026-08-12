@@ -18,6 +18,7 @@ NISMOSampler(
     ensemble_rwalk_settings=None,
     n_workers=1,
     queue_size=None,
+    output_path=None,
 )
 ```
 
@@ -28,6 +29,12 @@ least two, although ensemble sampling imposes a higher effective minimum.
 `tie_policy="strict"` is appropriate for ordinary continuous
 pseudo-likelihoods. Use `"randomized_plateau"` when exact ties have nonzero
 probability.
+
+`output_path` accepts a string or path-like directory. When set, `run()` saves
+weighted samples, complete iteration history, a strict JSON diagnostic summary,
+and the standard run, nested-progress, and weight-health plots. The directory
+is created before sampling so invalid or inaccessible paths fail early. Reusing
+the same path replaces NISMO's standard output files.
 
 ## Replacement proposals
 

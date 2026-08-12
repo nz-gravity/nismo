@@ -121,6 +121,7 @@ NISMOSampler(
     ensemble_rwalk_settings=None,
     n_workers=1,
     queue_size=None,
+    output_path=None,
 )
 ```
 
@@ -143,6 +144,7 @@ NISMOSampler.from_posterior_samples(
     ensemble_rwalk_settings=None,
     n_workers=1,
     queue_size=None,
+    output_path=None,
 )
 ```
 
@@ -272,7 +274,28 @@ result.all_points
 result.all_log_psi0
 result.posterior_weights
 result.resample_equal(rng, n_samples=None)
+result.save(output_path, plots=True)
 ```
+
+`parameter_names` stores the model's parameter-column order. `save()` writes
+the same output bundle produced automatically by the sampler's `output_path`.
+
+### Saved output bundle
+
+`save_run_outputs(result, output_path, plots=True)` is also available as a
+top-level function. The bundle contains:
+
+| File | Contents |
+|---|---|
+| `weighted_samples.npz` | Parameter names, dead-plus-live points, normalized and log weights, cached log densities, tie breakers, and live/dead flags |
+| `run_history.npz` | Every `RunHistory` array and ensemble move histories when present |
+| `diagnostics.json` | Result scalars, configuration, run/queue diagnostics, proposal updates, warnings, and reproducibility metadata |
+| `run_diagnostics.png` | Evidence, threshold, call, and proposal progress |
+| `nested_progress.png` | Live-set and remaining-evidence progression |
+| `weight_health.png` | Sorted posterior-weight and cumulative-mass diagnostics |
+
+Plot files require `nismo[plot]`. Missing Matplotlib does not prevent the NPZ
+and JSON files from being saved.
 
 ### `RunHistory`
 

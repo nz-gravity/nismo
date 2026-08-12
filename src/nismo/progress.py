@@ -68,6 +68,7 @@ class _TqdmProgress:
             unit="it",
             dynamic_ncols=True,
             mininterval=0.2,
+            delay=0.2,
             bar_format="{desc}: iter: {n} [{elapsed}, {rate_fmt}{postfix}]",
         )
         self._postfix: dict[str, str | int] = {}
@@ -103,6 +104,7 @@ class _TqdmProgress:
 
     def close(self, termination_reason: str) -> None:
         del termination_reason
+        self._bar.delay = 0.0
         self._bar.close()
 
 

@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Added sampler-level `output_path` persistence for weighted samples, complete
+  run history, strict JSON diagnostics, and standard diagnostic plots, plus
+  reusable `NISMOResult.save()` and `save_run_outputs()` APIs.
 - Optimized `s-rwalk` with rolling remove/add live-set covariance statistics,
   Cholesky-first factors, configurable factor refreshes, shared queue-snapshot
   geometry, and batched Gaussian proposal linear algebra.

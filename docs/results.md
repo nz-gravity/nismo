@@ -48,6 +48,8 @@ importance density, pseudo-likelihood, volume/weight, and tie-breaker values:
 - `final_live_points`, `final_live_log_likelihood`, `final_live_log_prior`,
   `final_live_log_q0`, `final_live_log_psi0`, `final_live_tie_breakers`.
 
+Parameter-column names are retained as `result.parameter_names`.
+
 Equal-weight output is available when required:
 
 ```python
@@ -56,6 +58,25 @@ samples = result.resample_equal(rng=123, n_samples=10_000)
 
 The default sample count is `niter + nlive`. Systematic resampling adds Monte
 Carlo variation and can repeat points, so weighted summaries remain primary.
+
+## Saving a run
+
+Set `output_path` during sampler construction for automatic output:
+
+```python
+sampler = NISMOSampler(..., output_path="runs/example")
+result = sampler.run(dlogz=1e-2)
+```
+
+Alternatively, save an existing result with `result.save("runs/example")`.
+The bundle preserves canonical weighted samples in `weighted_samples.npz`, all
+iteration arrays in `run_history.npz`, and scalar run health, configuration,
+queue accounting, and reproducibility metadata in `diagnostics.json`.
+
+With `nismo[plot]` installed it also saves `run_diagnostics.png`,
+`nested_progress.png`, and `weight_health.png`. Use `plots=False` for a
+data-only bundle. Existing standard filenames are replaced while unrelated
+directory contents are left untouched.
 
 ## History
 
@@ -130,6 +151,7 @@ figure, axes = plot_run(result)
 figure.savefig("run.png", dpi=160)
 ```
 
-All helpers return `(figure, axes)`, never call `show()`, and never write files.
+All helpers return `(figure, axes)` and never call `show()`. They only write
+files when invoked through the explicit result/output-bundle persistence API.
 `plot_posterior_1d` accepts `parameter`, `bins`, and optional equally shaped
 `truth_x` / `truth_density` arrays.
