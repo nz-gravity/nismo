@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Optimized `s-rwalk` with rolling remove/add live-set covariance statistics,
+  Cholesky-first factors, configurable factor refreshes, shared queue-snapshot
+  geometry, and batched Gaussian proposal linear algebra.
+- Added prior-first evaluation so outside-prior and zero-likelihood proposals
+  skip unnecessary likelihood or fixed-Morph density calls while preserving
+  hard likelihood budgets and complete-chain semantics.
+- Added opt-in `s-rwalk` component profiling, a profiling benchmark, and
+  covariance-drift, stationarity, accounting, and integration regressions.
+
 ## 0.1.2 - 2026-08-11
 
 - Updated release metadata and README version references for the PyPI release.

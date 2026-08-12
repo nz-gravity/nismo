@@ -208,6 +208,9 @@ SRWalkSettings(
     facc=0.5,
     covariance_shrinkage=0.1,
     covariance_jitter=1e-10,
+    covariance_update_interval=1,
+    covariance_rebuild_interval=None,
+    profile=False,
 )
 
 EnsembleMoveWeights(de=0.60, stretch=0.25, gaussian=0.15)

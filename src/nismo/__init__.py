@@ -35,7 +35,13 @@ from .replacement import (
     ReplacementResult,
     ReplacementSnapshot,
 )
-from .results import EnsembleMoveHistory, NISMOResult, ProposalUpdateRecord, RunHistory
+from .results import (
+    EnsembleMoveHistory,
+    NISMOResult,
+    ProposalUpdateRecord,
+    RunHistory,
+    SRWalkDiagnostics,
+)
 from .sampler import NISMOSampler
 from .stopping import StoppingCriterionConfig, StoppingPolicy
 
@@ -70,6 +76,7 @@ __all__ = [
     "ReplacementSnapshot",
     "RunDiagnostics",
     "RunHistory",
+    "SRWalkDiagnostics",
     "SRWalkSettings",
     "StoppingCriterionConfig",
     "StoppingPolicy",

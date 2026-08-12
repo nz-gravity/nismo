@@ -54,6 +54,7 @@ def test_parallel_settings_resolve_defaults_and_validate_positive_integers() -> 
 def test_replacement_snapshot_owns_read_only_copies() -> None:
     theta = np.arange(6.0).reshape(3, 2)
     values = np.arange(3.0)
+    factor = np.eye(2)
     snapshot = ReplacementSnapshot(
         threshold=0.0,
         threshold_tie_breaker=0.25,
@@ -65,13 +66,18 @@ def test_replacement_snapshot_owns_read_only_copies() -> None:
         live_log_psi0=values,
         live_tie_breakers=values,
         proposal_revision=2,
+        srwalk_factor=factor,
     )
     theta[:] = -1.0
     values[:] = -1.0
+    factor[:] = -1.0
     assert np.all(snapshot.live_theta >= 0.0)
     assert np.all(snapshot.live_log_psi0 >= 0.0)
     assert not snapshot.live_theta.flags.writeable
     assert not snapshot.live_log_psi0.flags.writeable
+    np.testing.assert_array_equal(snapshot.srwalk_factor, np.eye(2))
+    assert snapshot.srwalk_factor is not None
+    assert not snapshot.srwalk_factor.flags.writeable
 
 
 def test_replacement_queue_is_fifo_and_revalidates_threshold_and_revision() -> None:

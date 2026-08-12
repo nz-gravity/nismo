@@ -83,6 +83,21 @@ class CallableModel:
         scalar_map: ScalarLikelihoodMap | None = None,
     ) -> NDArray[np.float64]:
         points = validate_points(theta, self.ndim)
+        return self._evaluate_validated(function, points, name, scalar_map)
+
+    def _evaluate_validated(
+        self,
+        function: LogDensityCallable,
+        points: NDArray[np.float64],
+        name: str,
+        scalar_map: ScalarLikelihoodMap | None = None,
+    ) -> NDArray[np.float64]:
+        """Evaluate an already validated ``(n, ndim)`` array.
+
+        This internal path lets :class:`nismo.constrained.BatchEvaluator`
+        validate proposal coordinates once instead of repeating the same
+        finite-shape scan for the prior and likelihood.
+        """
         if self.vectorized:
             values = np.asarray(function(points), dtype=float)
         elif scalar_map is None:
@@ -96,6 +111,23 @@ class CallableModel:
                 f"{name} must return shape ({len(points)},), got {values.shape}"
             )
         return values
+
+    def _log_likelihood_validated(
+        self,
+        points: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        return self._evaluate_validated(
+            self.log_likelihood_fn,
+            points,
+            "log_likelihood",
+            self.scalar_likelihood_map,
+        )
+
+    def _log_prior_validated(
+        self,
+        points: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        return self._evaluate_validated(self.log_prior_fn, points, "log_prior")
 
     def log_likelihood(self, theta: NDArray[np.float64]) -> NDArray[np.float64]:
         """Return log-likelihood values with shape ``(n,)``."""

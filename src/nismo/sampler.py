@@ -34,6 +34,7 @@ from .exceptions import ConfigurationError
 from .mcmc import (
     RWALK_CITATIONS,
     RWalkSampler,
+    SRWalkGeometry,
     SRWalkSampler,
     draw_ensemble_rwalk_constrained,
     draw_rwalk_constrained,
@@ -58,7 +59,7 @@ from .replacement import (
     build_replacement,
     prepare_replacement_snapshot,
 )
-from .results import EnsembleMoveHistory, NISMOResult, RunHistory
+from .results import EnsembleMoveHistory, NISMOResult, RunHistory, SRWalkDiagnostics
 from .stopping import (
     SCIENTIFIC_TERMINATION_REASONS,
     StoppingPolicy,
@@ -95,6 +96,7 @@ def _draw_replacement(
     deadline: float | None,
     rwalk_sampler: RWalkSampler | None,
     srwalk_sampler: SRWalkSampler | None,
+    srwalk_factor: NDArray[np.float64] | None,
 ) -> ConstrainedAttempt:
     """Dispatch one replacement without mixing proposal-specific mechanics."""
     if config.proposal_scheme in ("fixed_morph", "adaptive_morph"):
@@ -151,6 +153,7 @@ def _draw_replacement(
             max_proposals=config.max_proposals_per_replacement,
             max_likelihood_calls=config.max_likelihood_calls,
             deadline=deadline,
+            proposal_factor=srwalk_factor,
         )
     if config.proposal_scheme == "en-rwalk":
         return draw_ensemble_rwalk_constrained(
@@ -187,6 +190,9 @@ def _evaluation_delta(
         prior_calls=after.prior_calls - before.prior_calls,
         outside_prior=after.outside_prior - before.outside_prior,
         zero_likelihood=after.zero_likelihood - before.zero_likelihood,
+        likelihood_seconds=after.likelihood_seconds - before.likelihood_seconds,
+        prior_seconds=after.prior_seconds - before.prior_seconds,
+        q0_seconds=after.q0_seconds - before.q0_seconds,
     )
 
 
@@ -198,6 +204,9 @@ def _add_evaluation_counts(
     evaluator.n_prior_calls += counts.prior_calls
     evaluator.outside_prior += counts.outside_prior
     evaluator.zero_likelihood += counts.zero_likelihood
+    evaluator.likelihood_seconds += counts.likelihood_seconds
+    evaluator.prior_seconds += counts.prior_seconds
+    evaluator.q0_seconds += counts.q0_seconds
 
 
 def _worker_model(model: Any, *, n_workers: int) -> Any:
@@ -217,7 +226,7 @@ def _fixed_job_call_requirement(
     rwalk_sampler: RWalkSampler | None,
     srwalk_sampler: SRWalkSampler | None,
 ) -> int | None:
-    """Return an exact per-job call count, or ``None`` for rejection draws."""
+    """Return the worst-case per-job likelihood reservation when fixed."""
     if config.proposal_scheme == "rwalk":
         if rwalk_sampler is None:  # pragma: no cover - run initializes it
             raise RuntimeError("rwalk controller is not initialized")
@@ -506,7 +515,13 @@ class NISMOSampler:
         start = time.monotonic()
         deadline = None if max_wall_time is None else start + max_wall_time
         initial_state = copy.deepcopy(self.rng.bit_generator.state)
-        evaluator = BatchEvaluator(self.model, self.importance_morph)
+        evaluator = BatchEvaluator(
+            self.model,
+            self.importance_morph,
+            profile=(
+                config.proposal_scheme == "s-rwalk" and config.srwalk_settings.profile
+            ),
+        )
         self.proposal_morph = self.importance_morph
         self.adaptive_proposal_controller = None
         rwalk_sampler = (
@@ -546,6 +561,11 @@ class NISMOSampler:
         live_log_q0 = np.array(initial.log_q0, copy=True)
         live_log_psi0 = np.array(initial.log_psi0, copy=True)
         live_tie_breakers = self.rng.random(self.n_live)
+        srwalk_geometry = (
+            SRWalkGeometry(live_theta, settings=config.srwalk_settings)
+            if config.proposal_scheme == "s-rwalk"
+            else None
+        )
 
         dead_points: list[NDArray[np.float64]] = []
         dead_log_likelihood: list[float] = []
@@ -629,6 +649,32 @@ class NISMOSampler:
         )
         next_job_id = 0
         epoch_results: list[ReplacementResult] = []
+        srwalk_queue_setup_seconds = 0.0
+        srwalk_worker_dispatch_seconds = 0.0
+        srwalk_attempt_factorization_seconds = 0.0
+        srwalk_proposal_seconds = 0.0
+        srwalk_total_squared_displacement = 0.0
+        srwalk_completed_walks = 0
+        initial_likelihood_seconds = evaluator.likelihood_seconds
+        initial_prior_seconds = evaluator.prior_seconds
+        initial_q0_seconds = evaluator.q0_seconds
+
+        def record_srwalk_attempt(attempt: ConstrainedAttempt) -> None:
+            nonlocal srwalk_attempt_factorization_seconds
+            nonlocal srwalk_proposal_seconds
+            nonlocal srwalk_total_squared_displacement
+            nonlocal srwalk_completed_walks
+            if not config.srwalk_settings.profile:
+                return
+            srwalk_attempt_factorization_seconds += attempt.srwalk_factorization_seconds
+            srwalk_proposal_seconds += attempt.srwalk_proposal_seconds
+            if (
+                attempt.draw is not None
+                and srwalk_sampler is not None
+                and attempt.n_completed == srwalk_sampler.n_steps
+            ):
+                srwalk_completed_walks += 1
+                srwalk_total_squared_displacement += attempt.srwalk_squared_displacement
 
         def active_proposal_revision() -> int:
             if self.adaptive_proposal_controller is None:
@@ -666,6 +712,8 @@ class NISMOSampler:
             threshold_tie: float,
         ) -> str | None:
             nonlocal epoch_results, next_job_id, n_proposals
+            nonlocal srwalk_queue_setup_seconds
+            nonlocal srwalk_worker_dispatch_seconds
             queue_size = config.parallel.queue_size
             if queue_size is None:  # pragma: no cover - post-init resolves it
                 raise RuntimeError("parallel queue_size was not resolved")
@@ -681,7 +729,7 @@ class NISMOSampler:
             if capacity <= 0:
                 return "max_iterations"
 
-            exact_calls = _fixed_job_call_requirement(
+            reserved_calls = _fixed_job_call_requirement(
                 config=config,
                 rwalk_sampler=rwalk_sampler,
                 srwalk_sampler=srwalk_sampler,
@@ -691,11 +739,11 @@ class NISMOSampler:
                 remaining = config.max_likelihood_calls - evaluator.n_likelihood_calls
                 if remaining <= 0:
                     return "max_likelihood_calls"
-                if exact_calls is not None:
-                    if remaining < exact_calls:
+                if reserved_calls is not None:
+                    if remaining < reserved_calls:
                         return "max_likelihood_calls"
-                    capacity = min(capacity, remaining // exact_calls)
-                    job_call_budget = exact_calls
+                    capacity = min(capacity, remaining // reserved_calls)
+                    job_call_budget = reserved_calls
                 elif remaining >= config.max_proposals_per_replacement:
                     capacity = min(
                         capacity,
@@ -708,6 +756,12 @@ class NISMOSampler:
             if capacity <= 0:
                 return "max_likelihood_calls"
 
+            srwalk_factor = (
+                srwalk_geometry.factor_for_worst(live_theta[worst])
+                if srwalk_geometry is not None
+                else None
+            )
+            setup_start = time.perf_counter() if config.srwalk_settings.profile else 0.0
             snapshot = prepare_replacement_snapshot(
                 threshold=threshold,
                 threshold_tie_breaker=threshold_tie,
@@ -719,6 +773,7 @@ class NISMOSampler:
                 live_log_psi0=live_log_psi0,
                 live_tie_breakers=live_tie_breakers,
                 proposal_revision=active_proposal_revision(),
+                srwalk_factor=srwalk_factor,
             )
             jobs: list[ReplacementJob] = []
             if job_seed_sequence is None:  # pragma: no cover - queued mode only
@@ -748,13 +803,20 @@ class NISMOSampler:
                     )
                 )
                 next_job_id += 1
+            if config.srwalk_settings.profile:
+                srwalk_queue_setup_seconds += time.perf_counter() - setup_start
 
             queue_accounting.queue_refills += 1
             queue_accounting.queue_jobs_submitted += len(jobs)
+            dispatch_start = (
+                time.perf_counter() if config.srwalk_settings.profile else 0.0
+            )
             if executor is None:
                 results = [build_replacement(job) for job in jobs]
             else:
                 results = list(executor.map(build_replacement, jobs, chunksize=1))
+            if config.srwalk_settings.profile:
+                srwalk_worker_dispatch_seconds += time.perf_counter() - dispatch_start
             for result in results:
                 queue_accounting.queue_jobs_completed += 1
                 queue_accounting.prefetch_likelihood_calls += (
@@ -762,6 +824,7 @@ class NISMOSampler:
                 )
                 _add_evaluation_counts(evaluator, result.counts)
                 n_proposals += result.attempt.n_proposed
+                record_srwalk_attempt(result.attempt)
             queue.extend(results)
             epoch_results = results
             return None
@@ -801,6 +864,11 @@ class NISMOSampler:
                     before = _evaluation_counts(evaluator)
                     queue_accounting.queue_refills += 1
                     queue_accounting.queue_jobs_submitted += 1
+                    srwalk_factor = (
+                        srwalk_geometry.factor_for_worst(live_theta[worst])
+                        if srwalk_geometry is not None
+                        else None
+                    )
                     attempt = _draw_replacement(
                         config=config,
                         evaluator=evaluator,
@@ -818,6 +886,7 @@ class NISMOSampler:
                         deadline=deadline,
                         rwalk_sampler=rwalk_sampler,
                         srwalk_sampler=srwalk_sampler,
+                        srwalk_factor=srwalk_factor,
                     )
                     counts = _evaluation_delta(
                         before,
@@ -828,6 +897,7 @@ class NISMOSampler:
                         counts.likelihood_calls
                     )
                     n_proposals += attempt.n_proposed
+                    record_srwalk_attempt(attempt)
                     if attempt.draw is not None:
                         queue_accounting.queue_candidates_consumed += 1
                         queue_accounting.used_prefetch_likelihood_calls += (
@@ -911,7 +981,8 @@ class NISMOSampler:
             log_x, log_delta_x, log_weight = dead_log_contribution(
                 iteration, self.n_live, threshold
             )
-            dead_points.append(np.array(live_theta[worst], copy=True))
+            outgoing_theta = np.array(live_theta[worst], copy=True)
+            dead_points.append(outgoing_theta)
             dead_log_likelihood.append(float(live_log_likelihood[worst]))
             dead_log_prior.append(float(live_log_prior[worst]))
             dead_log_q0.append(float(live_log_q0[worst]))
@@ -931,6 +1002,12 @@ class NISMOSampler:
                 live_log_psi0=live_log_psi0,
                 live_tie_breakers=live_tie_breakers,
             )
+            if srwalk_geometry is not None:
+                srwalk_geometry.commit_replacement(
+                    outgoing=outgoing_theta,
+                    incoming=point.theta,
+                    live_theta=live_theta,
+                )
             niter = iteration
 
             logz_dead, dead_log_psi_mean = update_log_weighted_mean(
@@ -1111,6 +1188,33 @@ class NISMOSampler:
         if executor is not None:
             executor.shutdown(wait=True, cancel_futures=True)
         queue_diagnostics = queue_accounting.freeze()
+        srwalk_diagnostics = None
+        if config.proposal_scheme == "s-rwalk" and config.srwalk_settings.profile:
+            if srwalk_geometry is None:  # pragma: no cover - initialized above
+                raise RuntimeError("s-rwalk geometry is not initialized")
+            srwalk_diagnostics = SRWalkDiagnostics(
+                geometry_updates=srwalk_geometry.n_updates,
+                geometry_rebuilds=srwalk_geometry.n_rebuilds,
+                factor_refreshes=srwalk_geometry.n_factorizations,
+                completed_walks=srwalk_completed_walks,
+                geometry_update_seconds=srwalk_geometry.update_seconds,
+                geometry_rebuild_seconds=srwalk_geometry.rebuild_seconds,
+                factorization_seconds=(
+                    srwalk_geometry.factorization_seconds
+                    + srwalk_attempt_factorization_seconds
+                ),
+                proposal_linear_algebra_seconds=srwalk_proposal_seconds,
+                prior_seconds=evaluator.prior_seconds - initial_prior_seconds,
+                likelihood_seconds=(
+                    evaluator.likelihood_seconds - initial_likelihood_seconds
+                ),
+                q0_seconds=evaluator.q0_seconds - initial_q0_seconds,
+                queue_setup_seconds=srwalk_queue_setup_seconds,
+                worker_dispatch_seconds=srwalk_worker_dispatch_seconds,
+                total_squared_displacement=srwalk_total_squared_displacement,
+                stale_candidates=queue_diagnostics.queue_candidates_stale,
+                completed_candidates=queue_diagnostics.queue_jobs_completed,
+            )
         progress_reporter.close(termination_reason)
         final_log_x = -niter / self.n_live
         quadrature = finalize_quadrature(
@@ -1228,4 +1332,5 @@ class NISMOSampler:
             warnings=tuple(warnings),
             queue_diagnostics=queue_diagnostics,
             ensemble_move_history=ensemble_move_history,
+            srwalk_diagnostics=srwalk_diagnostics,
         )

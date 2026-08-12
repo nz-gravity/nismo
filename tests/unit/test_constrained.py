@@ -10,7 +10,11 @@ from nismo import (
     InvalidProposalOutput,
     ProposalSupportError,
 )
-from nismo.constrained import BatchEvaluator, draw_constrained
+from nismo.constrained import (
+    BatchEvaluator,
+    LikelihoodBudgetExhausted,
+    draw_constrained,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -109,6 +113,72 @@ def test_evaluator_detects_proposal_support_failure() -> None:
     )
     with pytest.raises(ProposalSupportError, match="support failure"):
         BatchEvaluator(model, proposal).evaluate(np.array([[0.5]]))
+
+
+def test_evaluator_short_circuits_prior_and_zero_likelihood_rows() -> None:
+    class CountingProposal:
+        ndim = 1
+
+        def __init__(self) -> None:
+            self.rows = 0
+
+        def log_prob(self, theta: np.ndarray) -> np.ndarray:
+            self.rows += len(theta)
+            return np.zeros(len(theta))
+
+    likelihood_rows = 0
+
+    def log_prior(theta: np.ndarray) -> np.ndarray:
+        return np.where(theta[:, 0] < 0.0, -np.inf, 0.0)
+
+    def log_likelihood(theta: np.ndarray) -> np.ndarray:
+        nonlocal likelihood_rows
+        likelihood_rows += len(theta)
+        return np.where(theta[:, 0] == 0.0, -np.inf, -(theta[:, 0] ** 2))
+
+    proposal = CountingProposal()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=log_likelihood,
+        log_prior_fn=log_prior,
+    )
+    evaluator = BatchEvaluator(model, proposal)
+    batch = evaluator.evaluate(np.array([[-1.0], [0.0], [1.0]]))
+
+    assert evaluator.n_prior_calls == 3
+    assert evaluator.n_likelihood_calls == 2
+    assert likelihood_rows == 2
+    assert proposal.rows == 1
+    assert evaluator.outside_prior == 1
+    assert evaluator.zero_likelihood == 1
+    np.testing.assert_array_equal(batch.log_psi0, [-np.inf, -np.inf, -1.0])
+
+
+def test_evaluate_one_checks_prior_before_likelihood_budget() -> None:
+    proposal = UniformProposal()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda theta: np.zeros(len(theta)),
+        log_prior_fn=proposal.log_prob,
+    )
+    evaluator = BatchEvaluator(model, proposal)
+
+    outside = evaluator.evaluate_one(
+        np.array([-1.0]),
+        max_likelihood_calls=0,
+    )
+    assert np.isneginf(outside[1])
+    assert evaluator.n_prior_calls == 1
+    assert evaluator.n_likelihood_calls == 0
+    with pytest.raises(LikelihoodBudgetExhausted):
+        evaluator.evaluate_one(
+            np.array([0.5]),
+            max_likelihood_calls=0,
+        )
+    assert evaluator.n_prior_calls == 2
+    assert evaluator.n_likelihood_calls == 0
 
 
 def test_constrained_draw_rejects_bad_proposal_sample_shape() -> None:
