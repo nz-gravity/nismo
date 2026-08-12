@@ -146,6 +146,7 @@ sampler = NISMOSampler(
     n_live=200,
     rng=42,
     n_workers=1,
+    output_path="runs/example",
 )
 
 result = sampler.run(dlogz=1e-2, progress=True)
@@ -161,6 +162,12 @@ posterior_mean = np.average(points, axis=0, weights=weights)
 # Equal-weight samples are available when required by downstream software.
 equal_weight_samples = result.resample_equal(rng=43, n_samples=10_000)
 ```
+
+When `output_path` is set, every completed or valid partial run automatically
+writes `weighted_samples.npz`, `run_history.npz`, `diagnostics.json`, and three
+diagnostic figures. Install `nismo[plot]` to enable the PNG output; samples and
+diagnostics are still saved when Matplotlib is unavailable. The same bundle can
+be written later with `result.save("runs/example")`.
 
 Model functions receive batches with shape `(n, ndim)` and return one natural
 logarithm per row. The prior must be normalized and include every normalization

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, fields
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -232,6 +234,7 @@ class NISMOResult:
     n_likelihood_calls: int
     n_prior_calls: int
     n_proposals: int
+    parameter_names: tuple[str, ...]
     dead_points: NDArray[np.float64]
     dead_log_likelihood: NDArray[np.float64]
     dead_log_prior: NDArray[np.float64]
@@ -289,6 +292,16 @@ class NISMOResult:
         ndim = (
             self.final_live_points.shape[1] if self.final_live_points.ndim == 2 else -1
         )
+        parameter_names = tuple(self.parameter_names)
+        if (
+            len(parameter_names) != ndim
+            or len(set(parameter_names)) != ndim
+            or any(not isinstance(name, str) or not name for name in parameter_names)
+        ):
+            raise ValueError(
+                "parameter_names must contain one unique non-empty name per dimension"
+            )
+        object.__setattr__(self, "parameter_names", parameter_names)
         expected_dead_matrix = (self.niter, ndim)
         expected_live_matrix = (self.nlive, ndim)
 
@@ -386,6 +399,17 @@ class NISMOResult:
         values = np.concatenate((self.dead_log_psi0, self.final_live_log_psi0))
         values.setflags(write=False)
         return values
+
+    def save(
+        self,
+        output_path: str | os.PathLike[str],
+        *,
+        plots: bool = True,
+    ) -> Path:
+        """Persist samples, run diagnostics, history, and optional plots."""
+        from .output import save_run_outputs
+
+        return save_run_outputs(self, output_path, plots=plots)
 
     def resample_equal(
         self,

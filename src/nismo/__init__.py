@@ -22,6 +22,7 @@ from .exceptions import (
     ProposalSupportError,
 )
 from .model import CallableModel, Model
+from .output import save_run_outputs
 from .plotting import (
     plot_nested_progress,
     plot_posterior_1d,
@@ -86,5 +87,6 @@ __all__ = [
     "plot_run",
     "plot_weight_health",
     "posterior_ess",
+    "save_run_outputs",
     "summarize",
 ]

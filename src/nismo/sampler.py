@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import multiprocessing as mp
+import os
 import time
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
@@ -41,6 +42,7 @@ from .mcmc import (
     draw_srwalk_constrained,
 )
 from .model import CallableModel, Model
+from .output import normalize_output_path, prepare_output_directory
 from .progress import ProgressOption, create_progress_reporter
 from .proposals import MorphProposal, Proposal, RefittableProposal
 from .quadrature import (
@@ -301,6 +303,9 @@ class NISMOSampler:
     parallel
         Legacy complete-replacement settings object. Prefer ``n_workers`` and
         ``queue_size``; do not combine the two forms.
+    output_path
+        Optional directory where each completed or partial run automatically
+        saves weighted samples, history, diagnostics, and diagnostic plots.
     """
 
     def __init__(
@@ -320,6 +325,7 @@ class NISMOSampler:
         n_workers: int = 1,
         queue_size: int | None = None,
         parallel: ParallelSettings | None = None,
+        output_path: str | os.PathLike[str] | None = None,
     ) -> None:
         if model.ndim != importance_morph.ndim:
             raise ValueError(
@@ -376,6 +382,7 @@ class NISMOSampler:
         self.parallel = resolved_parallel
         self.n_workers = resolved_parallel.n_workers
         self.queue_size = resolved_parallel.queue_size
+        self.output_path = normalize_output_path(output_path)
         if proposal_scheme == "rwalk":
             RWalkSampler(settings=self.rwalk_settings, ndim=model.ndim)
         if proposal_scheme == "s-rwalk":
@@ -407,6 +414,7 @@ class NISMOSampler:
         n_workers: int = 1,
         queue_size: int | None = None,
         parallel: ParallelSettings | None = None,
+        output_path: str | os.PathLike[str] | None = None,
     ) -> NISMOSampler:
         """Fit MorphZ once and construct a sampler.
 
@@ -433,6 +441,7 @@ class NISMOSampler:
             n_workers=n_workers,
             queue_size=queue_size,
             parallel=parallel,
+            output_path=output_path,
         )
 
     def run(
@@ -504,6 +513,8 @@ class NISMOSampler:
             max_wall_time=max_wall_time,
             tie_policy=self.tie_policy,
         )
+        if self.output_path is not None:
+            prepare_output_directory(self.output_path)
         stopping_policy = config.stopping
         if stopping_policy is None:  # pragma: no cover - config always resolves it
             raise RuntimeError("NISMOConfig did not resolve a stopping policy")
@@ -1292,7 +1303,7 @@ class NISMOSampler:
         )
         final_state = copy.deepcopy(self.rng.bit_generator.state)
         ndim = self.model.ndim
-        return NISMOResult(
+        result = NISMOResult(
             logz=quadrature.logz,
             logzerr=quadrature.logzerr,
             information=quadrature.information,
@@ -1303,6 +1314,7 @@ class NISMOSampler:
             n_likelihood_calls=evaluator.n_likelihood_calls,
             n_prior_calls=evaluator.n_prior_calls,
             n_proposals=n_proposals,
+            parameter_names=tuple(self.model.parameter_names),
             dead_points=np.asarray(dead_points, dtype=float).reshape(niter, ndim),
             dead_log_likelihood=np.asarray(dead_log_likelihood),
             dead_log_prior=np.asarray(dead_log_prior),
@@ -1334,3 +1346,6 @@ class NISMOSampler:
             ensemble_move_history=ensemble_move_history,
             srwalk_diagnostics=srwalk_diagnostics,
         )
+        if self.output_path is not None:
+            result.save(self.output_path)
+        return result

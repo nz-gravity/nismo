@@ -90,6 +90,7 @@ sampler = NISMOSampler(
     n_live=200,
     rng=42,
     n_workers=1,
+    output_path="runs/example",
 )
 
 result = sampler.run(
@@ -105,6 +106,24 @@ print(result.success, result.termination_reason)
 Omitting both `dlogz` and `stopping` uses `dlogz=1e-3`. A hard resource limit
 returns a valid partial result with `success=False`; malformed densities and
 missing fixed-importance support raise typed exceptions.
+
+`output_path` creates the directory if necessary and automatically saves valid
+complete or partial results as:
+
+```text
+runs/example/
+├── diagnostics.json
+├── nested_progress.png
+├── run_diagnostics.png
+├── run_history.npz
+├── weight_health.png
+└── weighted_samples.npz
+```
+
+The two NPZ files and JSON summary are always written. Install `nismo[plot]`
+for the PNG files. Without Matplotlib, NISMO emits a warning after saving the
+data files. Existing standard output filenames are replaced; unrelated files
+in the directory are preserved.
 
 Set `n_workers` directly on `NISMOSampler` to construct replacement candidates
 in parallel. `queue_size` defaults to `n_workers` and can be set explicitly to
@@ -131,6 +150,13 @@ equal_samples = result.resample_equal(rng=43, n_samples=10_000)
 
 Repeated rows are expected after resampling. Keep `all_points` and
 `posterior_weights` for the highest-fidelity summaries.
+
+You can also save a returned result explicitly or omit plots:
+
+```python
+result.save("runs/copy")
+result.save("runs/data-only", plots=False)
+```
 
 ## 6. Inspect run health
 

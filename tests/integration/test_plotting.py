@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import matplotlib
 import numpy as np
 import pytest
@@ -47,3 +50,76 @@ def test_plots_return_figures_without_showing() -> None:
     progress_figure.canvas.draw()
     weight_figure.canvas.draw()
     posterior_figure.canvas.draw()
+
+
+def test_sampler_output_path_saves_complete_run_bundle(tmp_path: Path) -> None:
+    proposal = StandardNormalProposal()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda x: np.full(len(x), np.log(1.5)),
+        log_prior_fn=proposal.log_prob,
+    )
+    output_path = tmp_path / "run"
+    sampler = NISMOSampler(
+        model=model,
+        importance_morph=proposal,
+        n_live=8,
+        rng=3,
+        tie_policy="randomized_plateau",
+        output_path=output_path,
+    )
+    result = sampler.run(dlogz=0.4, max_iterations=50)
+
+    assert sampler.output_path == output_path
+    assert result.parameter_names == ("x",)
+    expected_files = {
+        "weighted_samples.npz",
+        "run_history.npz",
+        "diagnostics.json",
+        "run_diagnostics.png",
+        "nested_progress.png",
+        "weight_health.png",
+    }
+    assert {path.name for path in output_path.iterdir()} == expected_files
+
+    with np.load(output_path / "weighted_samples.npz") as samples:
+        assert samples["parameter_names"].tolist() == ["x"]
+        np.testing.assert_allclose(samples["samples"], result.all_points)
+        np.testing.assert_allclose(
+            samples["posterior_weights"],
+            result.posterior_weights,
+        )
+        assert (
+            samples["is_live"].tolist()
+            == [False] * result.niter + [True] * result.nlive
+        )
+
+    with np.load(output_path / "run_history.npz") as history:
+        np.testing.assert_array_equal(history["iteration"], result.history.iteration)
+        np.testing.assert_allclose(
+            history["remaining_dlogz"],
+            result.history.remaining_dlogz,
+        )
+
+    diagnostics = json.loads((output_path / "diagnostics.json").read_text())
+    assert diagnostics["schema_version"] == 1
+    assert diagnostics["result"]["logz"] == pytest.approx(result.logz)
+    assert diagnostics["result"]["parameter_names"] == ["x"]
+    assert diagnostics["run_diagnostics"]["posterior_ess"] == pytest.approx(
+        1.0 / np.sum(result.posterior_weights**2)
+    )
+    assert set(diagnostics["files"]["plots"]) == {
+        "run_diagnostics.png",
+        "nested_progress.png",
+        "weight_health.png",
+    }
+    assert all((output_path / name).stat().st_size > 0 for name in expected_files)
+
+    data_only_path = result.save(tmp_path / "data-only", plots=False)
+    assert data_only_path == tmp_path / "data-only"
+    assert {path.name for path in data_only_path.iterdir()} == {
+        "weighted_samples.npz",
+        "run_history.npz",
+        "diagnostics.json",
+    }
