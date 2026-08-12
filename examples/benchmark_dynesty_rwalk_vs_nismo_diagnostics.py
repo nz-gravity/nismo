@@ -12,10 +12,11 @@ For each n_live value, the script:
 2. Converts that run's weighted samples to equal-weight posterior samples.
 3. Fits one fixed MorphZ proposal from the thinned posterior, as in the notebook.
 4. Runs N independent Dynesty calculations and N independent NISMO calculations.
-5. Saves every run immediately to CSV, writes aggregate statistics, and creates
-   a two-panel publication-style figure:
-      top:    log(Z) versus n_live
-      bottom: likelihood-call count versus n_live
+5. Computes two posterior diagnostics for every successful run:
+   * KL(posterior || prior), equal to the nested-sampling information H.
+   * classifier-estimated JSD to a cached high-accuracy Dynesty reference posterior.
+6. Saves every run immediately to CSV, writes aggregate statistics, and creates
+   publication-style comparison figures.
 
 The pilot Dynesty run is also Dynesty repeat 0, so exactly N Dynesty results are
 reported for each n_live. All N NISMO repeats at a given n_live use the same
@@ -34,25 +35,27 @@ CSV therefore stores three call-count definitions:
 * ncall_cold_start:
     NISMO calls plus the complete pilot Dynesty training cost.
 
-Choose the plotted definition with ``--ncall-metric``.
+Choose the plotted definition with ``--ncall-metric``. The high-accuracy reference
+Dynesty run and classifier diagnostics are diagnostic-only and are not added to
+benchmark likelihood-call or runtime statistics.
 
 Example
 -------
 Install from the current NISMO repository and install Dynesty:
 
-    pip install dynesty matplotlib scipy tqdm
+    pip install dynesty matplotlib scipy scikit-learn tqdm
     pip install "nismo[morph,plot,progress] @ git+https://github.com/nz-gravity/nismo.git@main"
 
 Run a small test:
 
-    python benchmark_dynesty_rwalk_vs_nismo.py \
+    python benchmark_dynesty_rwalk_vs_nismo_diagnostics.py \
         --nlive 50 100 \
         --repeats 2 \
         --progress
 
 Run the full paper-style grid:
 
-    python benchmark_dynesty_rwalk_vs_nismo.py \
+    python benchmark_dynesty_rwalk_vs_nismo_diagnostics.py \
         --nlive 50 100 200 300 400 500 \
         --repeats 10 \
         --ncall-metric direct \
@@ -60,7 +63,7 @@ Run the full paper-style grid:
 
 Regenerate the summaries and figure without rerunning samplers:
 
-    python benchmark_dynesty_rwalk_vs_nismo.py \
+    python benchmark_dynesty_rwalk_vs_nismo_diagnostics.py \
         --output-dir gaussian_shell_benchmark \
         --plot-only
 """
@@ -99,6 +102,10 @@ RAW_FIELDS = [
     "error",
     "abs_error",
     "squared_error",
+    "kl_posterior_prior",
+    "jsd_to_reference",
+    "jsd_reference_samples",
+    "reference_nlive",
     "ncall_direct",
     "ncall_training",
     "ncall_amortized",
@@ -240,6 +247,152 @@ def deterministic_seed(
     return int(sequence.generate_state(1, dtype=np.uint32)[0])
 
 
+def posterior_information_kl(
+    *,
+    posterior_log_likelihood: np.ndarray,
+    posterior_weights: np.ndarray,
+    logz: float,
+) -> float:
+    """Return KL(posterior || prior) in nats.
+
+    For p(theta|D) = L(theta) pi(theta) / Z,
+
+        KL(p || pi) = E_p[log L] - log Z.
+
+    The input weights are normalized defensively, so this works for both the
+    native Dynesty quadrature weights and NISMO posterior weights.
+    """
+    logl = np.asarray(posterior_log_likelihood, dtype=float)
+    weights = np.asarray(posterior_weights, dtype=float)
+    if logl.ndim != 1 or weights.ndim != 1 or logl.shape != weights.shape:
+        raise ValueError("posterior log-likelihoods and weights must be equal 1D arrays")
+    if not math.isfinite(logz):
+        return math.nan
+
+    mask = np.isfinite(logl) & np.isfinite(weights) & (weights >= 0.0)
+    if not np.any(mask):
+        return math.nan
+    weights = weights[mask]
+    norm = float(np.sum(weights))
+    if not math.isfinite(norm) or norm <= 0.0:
+        return math.nan
+    weights = weights / norm
+    return float(np.sum(weights * (logl[mask] - logz)))
+
+
+def _deterministic_subsample(
+    samples: np.ndarray,
+    *,
+    n_samples: int,
+    seed: int,
+) -> np.ndarray:
+    """Return a deterministic without-replacement subset of rows."""
+    values = np.asarray(samples, dtype=float)
+    if values.ndim != 2 or len(values) < 2:
+        raise ValueError("posterior samples must be a 2D array with at least two rows")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("posterior samples contain NaN or infinity")
+    count = min(int(n_samples), len(values))
+    rng = np.random.default_rng(seed)
+    if count == len(values):
+        return np.array(values, copy=True)
+    indices = np.sort(rng.choice(len(values), size=count, replace=False))
+    return np.array(values[indices], copy=True)
+
+
+def classifier_jsd_to_reference(
+    *,
+    posterior_samples: np.ndarray,
+    reference_samples: np.ndarray,
+    seed: int,
+    max_samples: int,
+    cv_folds: int,
+    classifier_max_iter: int,
+) -> float:
+    """Estimate JSD(posterior, reference) from held-out classification loss.
+
+    With equal class priors, the Bayes-optimal binary log-loss obeys
+
+        JSD(P, Q) = log(2) - L*.
+
+    We approximate L* with cross-validated ``HistGradientBoostingClassifier``
+    predictions on raw parameter vectors.  This avoids high-dimensional KDEs.
+    Because a finite classifier may be sub-optimal, the returned value is best
+    interpreted as a classifier-based JSD estimate/lower bound.  A value near
+    zero means the benchmark posterior is difficult to distinguish from the
+    reference posterior.
+    """
+    try:
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        from sklearn.metrics import log_loss
+        from sklearn.model_selection import StratifiedKFold
+    except ImportError as error:
+        raise ImportError(
+            "JSD-to-reference requires scikit-learn; install with "
+            "`pip install scikit-learn`."
+        ) from error
+
+    posterior = np.asarray(posterior_samples, dtype=float)
+    reference = np.asarray(reference_samples, dtype=float)
+    if posterior.ndim != 2 or reference.ndim != 2:
+        raise ValueError("posterior and reference samples must be 2D")
+    if posterior.shape[1] != reference.shape[1]:
+        raise ValueError("posterior and reference dimensionality must match")
+
+    n = min(len(posterior), len(reference), int(max_samples))
+    minimum = max(50, 10 * int(cv_folds))
+    if n < minimum:
+        raise ValueError(
+            f"JSD classifier requires at least {minimum} samples from each posterior; "
+            f"got {n}"
+        )
+
+    # Use independent deterministic RNG streams so both samplers at the same
+    # (nlive, repeat) can use exactly the same reference subset.
+    posterior_subset = _deterministic_subsample(
+        posterior,
+        n_samples=n,
+        seed=seed ^ 0x13579BDF,
+    )
+    reference_subset = _deterministic_subsample(
+        reference,
+        n_samples=n,
+        seed=seed ^ 0x2468ACE0,
+    )
+
+    x = np.concatenate((posterior_subset, reference_subset), axis=0)
+    y = np.concatenate(
+        (np.zeros(n, dtype=np.int8), np.ones(n, dtype=np.int8)), axis=0
+    )
+
+    splitter = StratifiedKFold(
+        n_splits=int(cv_folds),
+        shuffle=True,
+        random_state=int(seed),
+    )
+    losses: list[float] = []
+    for fold, (train_index, test_index) in enumerate(splitter.split(x, y)):
+        classifier = HistGradientBoostingClassifier(
+            learning_rate=0.08,
+            max_iter=int(classifier_max_iter),
+            max_leaf_nodes=31,
+            l2_regularization=1.0,
+            random_state=int((seed + fold + 1) % (2**32 - 1)),
+        )
+        classifier.fit(x[train_index], y[train_index])
+        probability = classifier.predict_proba(x[test_index])[:, 1]
+        probability = np.clip(probability, 1.0e-12, 1.0 - 1.0e-12)
+        losses.append(
+            float(log_loss(y[test_index], probability, labels=[0, 1]))
+        )
+
+    cross_entropy = float(np.mean(losses))
+    estimate = float(np.log(2.0) - cross_entropy)
+    # A finite/sub-optimal classifier can perform slightly worse than random,
+    # which would give a negative plug-in estimate although true JSD >= 0.
+    return max(0.0, estimate)
+
+
 def finite_float(value: Any, default: float = math.nan) -> float:
     try:
         result = float(value)
@@ -340,6 +493,10 @@ def make_success_row(
     n_training_samples: int = 0,
     training_pilot_seed: int | None = None,
     training_pilot_repeat: int | None = None,
+    kl_posterior_prior: float = math.nan,
+    jsd_to_reference: float = math.nan,
+    jsd_reference_samples: int = 0,
+    reference_nlive: int = 0,
     termination_reason: str = "",
     status: str = "success",
     message: str = "",
@@ -359,6 +516,10 @@ def make_success_row(
         "error": error,
         "abs_error": abs(error),
         "squared_error": error**2,
+        "kl_posterior_prior": kl_posterior_prior,
+        "jsd_to_reference": jsd_to_reference,
+        "jsd_reference_samples": jsd_reference_samples,
+        "reference_nlive": reference_nlive,
         "ncall_direct": ncall_direct,
         "ncall_training": ncall_training,
         "ncall_amortized": ncall_amortized,
@@ -407,6 +568,10 @@ def make_failure_row(
         "error": "",
         "abs_error": "",
         "squared_error": "",
+        "kl_posterior_prior": "",
+        "jsd_to_reference": "",
+        "jsd_reference_samples": "",
+        "reference_nlive": "",
         "ncall_direct": "",
         "ncall_training": "",
         "ncall_amortized": "",
@@ -465,11 +630,18 @@ def run_dynesty(
     ncall = int(np.sum(np.asarray(result.ncall, dtype=np.int64)))
     niter = int(getattr(result, "niter", len(result.logl)))
 
+    samples = np.asarray(result.samples, dtype=float)
+    log_weights = np.asarray(result.logwt, dtype=float)
+    weights = np.exp(log_weights - logsumexp(log_weights))
+    log_likelihood = np.asarray(result.logl, dtype=float)
+    information_kl = posterior_information_kl(
+        posterior_log_likelihood=log_likelihood,
+        posterior_weights=weights,
+        logz=logz,
+    )
+
     posterior: np.ndarray | None = None
     if collect_posterior:
-        samples = np.asarray(result.samples, dtype=float)
-        log_weights = np.asarray(result.logwt, dtype=float)
-        weights = np.exp(log_weights - logsumexp(log_weights))
         posterior = np.asarray(
             dyfunc.resample_equal(
                 samples,
@@ -485,6 +657,7 @@ def run_dynesty(
         "ncall": ncall,
         "niter": niter,
         "runtime_s": runtime_s,
+        "kl_posterior_prior": information_kl,
     }
     return statistics, posterior
 
@@ -579,7 +752,8 @@ def run_nismo(
     max_likelihood_calls: int | None,
     max_wall_time: float | None,
     progress: bool,
-) -> dict[str, Any]:
+    collect_posterior: bool,
+) -> tuple[dict[str, Any], np.ndarray | None]:
     """Run one NISMO calculation with the already fitted fixed importance q0."""
     from nismo import (
         EnsembleMoveWeights,
@@ -622,7 +796,7 @@ def run_nismo(
 
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
-    parallel = ParallelSettings(n_workers=4)
+    parallel = ParallelSettings(n_workers=8)
     result = sampler.run(
         dlogz=dlogz,
         max_iterations=max_iterations,
@@ -633,17 +807,35 @@ def run_nismo(
     )
     runtime_s = time.perf_counter() - start
 
-    return {
+    posterior_log_likelihood = np.concatenate(
+        (result.dead_log_likelihood, result.final_live_log_likelihood)
+    )
+    information_kl = posterior_information_kl(
+        posterior_log_likelihood=posterior_log_likelihood,
+        posterior_weights=result.posterior_weights,
+        logz=float(result.logz),
+    )
+
+    posterior: np.ndarray | None = None
+    if collect_posterior:
+        posterior = np.asarray(
+            result.resample_equal(rng=seed ^ 0x5A5A5A5A),
+            dtype=float,
+        )
+
+    statistics = {
         "logz": float(result.logz),
         "logzerr": float(result.logzerr),
         "ncall": int(result.n_likelihood_calls),
         "niter": int(result.niter),
         "nproposals": int(result.n_proposals),
         "runtime_s": runtime_s,
+        "kl_posterior_prior": information_kl,
         "success": bool(result.success),
         "termination_reason": str(result.termination_reason),
         "warnings": tuple(str(item) for item in result.warnings),
     }
+    return statistics, posterior
 
 
 def sample_standard_deviation(values: np.ndarray) -> float:
@@ -698,6 +890,16 @@ def summarize_rows(
         )
         true_logz = float(group[0]["true_logz"])
         errors = logz - true_logz
+        kl = np.asarray(
+            [finite_float(row.get("kl_posterior_prior")) for row in group],
+            dtype=float,
+        )
+        kl_finite = kl[np.isfinite(kl)]
+        jsd = np.asarray(
+            [finite_float(row.get("jsd_to_reference")) for row in group],
+            dtype=float,
+        )
+        jsd_finite = jsd[np.isfinite(jsd)]
         ncall_direct = np.asarray(
             [float(row["ncall_direct"]) for row in group],
             dtype=float,
@@ -750,6 +952,26 @@ def summarize_rows(
                 "bias": float(np.mean(errors)),
                 "mean_abs_error": float(np.mean(np.abs(errors))),
                 "rmse": float(np.sqrt(np.mean(errors**2))),
+                "kl_mean": (
+                    float(np.mean(kl_finite)) if len(kl_finite) else math.nan
+                ),
+                "kl_std": sample_standard_deviation(kl_finite),
+                "kl_sem": (
+                    sample_standard_deviation(kl_finite) / math.sqrt(len(kl_finite))
+                    if len(kl_finite)
+                    else math.nan
+                ),
+                "kl_n": int(len(kl_finite)),
+                "jsd_mean": (
+                    float(np.mean(jsd_finite)) if len(jsd_finite) else math.nan
+                ),
+                "jsd_std": sample_standard_deviation(jsd_finite),
+                "jsd_sem": (
+                    sample_standard_deviation(jsd_finite) / math.sqrt(len(jsd_finite))
+                    if len(jsd_finite)
+                    else math.nan
+                ),
+                "jsd_n": int(len(jsd_finite)),
                 "ncall_direct_mean": float(np.mean(ncall_direct)),
                 "ncall_direct_std": sample_standard_deviation(ncall_direct),
                 "ncall_training_mean": float(np.mean(ncall_training)),
@@ -783,6 +1005,14 @@ def summarize_rows(
         "bias",
         "mean_abs_error",
         "rmse",
+        "kl_mean",
+        "kl_std",
+        "kl_sem",
+        "kl_n",
+        "jsd_mean",
+        "jsd_std",
+        "jsd_sem",
+        "jsd_n",
         "ncall_direct_mean",
         "ncall_direct_std",
         "ncall_training_mean",
@@ -951,18 +1181,175 @@ def plot_summary(
     return png_path, pdf_path
 
 
+def plot_jsd_summary(
+    *,
+    summaries: list[dict[str, Any]],
+    output_dir: Path,
+    show: bool,
+) -> tuple[Path, Path] | None:
+    """Plot classifier-estimated JSD to the reference posterior versus n_live."""
+    import matplotlib.pyplot as plt
+
+    usable = [row for row in summaries if math.isfinite(finite_float(row.get("jsd_mean")))]
+    if not usable:
+        return None
+
+    methods = sorted(
+        {str(row["method"]) for row in usable},
+        key=lambda method: METHOD_ORDER.get(method, 99),
+    )
+    styles = {
+        "dynesty_rwalk": {"color": "black", "marker": "o", "linestyle": "-"},
+    }
+
+    fig, axis = plt.subplots(figsize=(7.2, 4.6))
+    for method_index, method in enumerate(methods):
+        group = sorted(
+            (row for row in usable if row["method"] == method),
+            key=lambda row: int(row["nlive"]),
+        )
+        x = np.asarray([row["nlive"] for row in group], dtype=float)
+        mean = np.asarray([row["jsd_mean"] for row in group], dtype=float)
+        std = np.asarray([row["jsd_std"] for row in group], dtype=float)
+        style = styles.get(
+            method,
+            {
+                "color": "tab:red" if method_index == 1 else f"C{method_index}",
+                "marker": "o",
+                "linestyle": "--",
+            },
+        )
+        label = str(group[0]["method_label"])
+        axis.fill_between(
+            x,
+            np.maximum(0.0, mean - std),
+            mean + std,
+            color=style["color"],
+            alpha=0.12,
+            linewidth=0,
+        )
+        axis.errorbar(
+            x,
+            mean,
+            yerr=std,
+            label=label,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.1,
+            markersize=4.5,
+            capsize=3,
+        )
+
+    axis.axhline(0.0, color="0.4", linestyle=":", linewidth=1.0)
+    axis.set_xlabel(r"$n_{\rm live}$")
+    axis.set_ylabel("Classifier JSD to reference [nats]")
+    axis.grid(True, which="major", linestyle=":", alpha=0.35)
+    axis.minorticks_on()
+    axis.tick_params(direction="in", top=True, right=True)
+    axis.legend(loc="best", frameon=True)
+
+    png_path = output_dir / "posterior_jsd_to_reference_vs_nlive.png"
+    pdf_path = output_dir / "posterior_jsd_to_reference_vs_nlive.pdf"
+    fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return png_path, pdf_path
+
+
+def plot_kl_summary(
+    *,
+    summaries: list[dict[str, Any]],
+    output_dir: Path,
+    show: bool,
+) -> tuple[Path, Path] | None:
+    """Plot KL(posterior || prior), i.e. nested-sampling information H."""
+    import matplotlib.pyplot as plt
+
+    usable = [row for row in summaries if math.isfinite(finite_float(row.get("kl_mean")))]
+    if not usable:
+        return None
+
+    methods = sorted(
+        {str(row["method"]) for row in usable},
+        key=lambda method: METHOD_ORDER.get(method, 99),
+    )
+    styles = {
+        "dynesty_rwalk": {"color": "black", "marker": "o", "linestyle": "-"},
+    }
+
+    fig, axis = plt.subplots(figsize=(7.2, 4.6))
+    for method_index, method in enumerate(methods):
+        group = sorted(
+            (row for row in usable if row["method"] == method),
+            key=lambda row: int(row["nlive"]),
+        )
+        x = np.asarray([row["nlive"] for row in group], dtype=float)
+        mean = np.asarray([row["kl_mean"] for row in group], dtype=float)
+        std = np.asarray([row["kl_std"] for row in group], dtype=float)
+        style = styles.get(
+            method,
+            {
+                "color": "tab:red" if method_index == 1 else f"C{method_index}",
+                "marker": "o",
+                "linestyle": "--",
+            },
+        )
+        label = str(group[0]["method_label"])
+        axis.fill_between(
+            x,
+            mean - std,
+            mean + std,
+            color=style["color"],
+            alpha=0.12,
+            linewidth=0,
+        )
+        axis.errorbar(
+            x,
+            mean,
+            yerr=std,
+            label=label,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.1,
+            markersize=4.5,
+            capsize=3,
+        )
+
+    axis.set_xlabel(r"$n_{\rm live}$")
+    axis.set_ylabel(r"$D_{\rm KL}(p\Vert\pi)$ [nats]")
+    axis.grid(True, which="major", linestyle=":", alpha=0.35)
+    axis.minorticks_on()
+    axis.tick_params(direction="in", top=True, right=True)
+    axis.legend(loc="best", frameon=True)
+
+    png_path = output_dir / "posterior_prior_kl_vs_nlive.png"
+    pdf_path = output_dir / "posterior_prior_kl_vs_nlive.pdf"
+    fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return png_path, pdf_path
+
+
 def print_summary(summaries: list[dict[str, Any]]) -> None:
     if not summaries:
         print("No successful runs were available for the summary.")
         return
     print("\nAggregate results")
-    print("-" * 108)
+    print("-" * 132)
     print(
         f"{'method':<22} {'nlive':>7} {'runs':>7} "
         f"{'mean logZ':>13} {'std':>10} {'bias':>10} "
-        f"{'mean ncall':>15} {'runtime [s]':>14}"
+        f"{'KL':>9} {'JSD-ref':>9} {'mean ncall':>15} {'runtime [s]':>14}"
     )
-    print("-" * 108)
+    print("-" * 132)
     for row in summaries:
         print(
             f"{row['method_label']:<22} "
@@ -971,10 +1358,12 @@ def print_summary(summaries: list[dict[str, Any]]) -> None:
             f"{float(row['logz_mean']):>13.5f} "
             f"{float(row['logz_std']):>10.5f} "
             f"{float(row['bias']):>10.5f} "
+            f"{float(row['kl_mean']):>9.4f} "
+            f"{float(row['jsd_mean']):>9.5f} "
             f"{float(row['ncall_plot_mean']):>15.1f} "
             f"{float(row['runtime_mean_s']):>14.1f}"
         )
-    print("-" * 108)
+    print("-" * 132)
 
 
 def print_incomplete_summary(
@@ -1091,6 +1480,7 @@ def save_config(
             "dynesty": package_version("dynesty"),
             "nismo": package_version("nismo"),
             "morphZ": package_version("morphZ"),
+            "scikit-learn": package_version("scikit-learn"),
         },
         "design": {
             "proposal_training": (
@@ -1101,6 +1491,19 @@ def save_config(
             "logz_error_bars": "Empirical sample standard deviation across repeats.",
             "ncall_error_bars": "Empirical sample standard deviation across repeats.",
             "ncall_default": args.ncall_metric,
+            "posterior_prior_kl": (
+                "KL(posterior || prior) = E_p[log L] - log Z, computed from "
+                "each sampler's native posterior quadrature weights."
+            ),
+            "posterior_reference_jsd": (
+                "Classifier-estimated JSD in nats between each run posterior and "
+                "a cached high-accuracy Dynesty reference posterior. Equal class "
+                "sizes and cross-validated held-out log-loss are used."
+            ),
+            "reference_nlive": args.reference_nlive,
+            "reference_dlogz": args.reference_dlogz,
+            "jsd_reference_samples": args.jsd_samples,
+            "jsd_cv_folds": args.jsd_cv_folds,
         },
     }
     path = output_dir / "benchmark_config.json"
@@ -1160,6 +1563,65 @@ def save_training_cache(
         )
 
 
+def reference_cache_paths(output_dir: Path) -> tuple[Path, Path]:
+    return (
+        output_dir / "reference_posterior_dynesty.npz",
+        output_dir / "reference_posterior_dynesty.json",
+    )
+
+
+def load_reference_cache(
+    output_dir: Path,
+    fingerprint: str,
+) -> tuple[np.ndarray, dict[str, Any]] | None:
+    samples_path, metadata_path = reference_cache_paths(output_dir)
+    if not samples_path.exists() or not metadata_path.exists():
+        return None
+    with np.load(samples_path) as data:
+        posterior = np.asarray(data["posterior_samples"], dtype=float)
+    with metadata_path.open("r", encoding="utf-8") as stream:
+        metadata_payload = json.load(stream)
+    if metadata_payload.get("run_fingerprint") != fingerprint:
+        return None
+    return posterior, metadata_payload
+
+
+def save_reference_cache(
+    *,
+    output_dir: Path,
+    posterior: np.ndarray,
+    statistics: dict[str, Any],
+    reference_nlive: int,
+    reference_dlogz: float,
+    reference_seed: int,
+    fingerprint: str,
+) -> None:
+    samples_path, metadata_path = reference_cache_paths(output_dir)
+    np.savez_compressed(
+        samples_path,
+        posterior_samples=np.asarray(posterior, dtype=float),
+    )
+    with metadata_path.open("w", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "created_utc": utc_now(),
+                "run_fingerprint": fingerprint,
+                "nlive": int(reference_nlive),
+                "dlogz": float(reference_dlogz),
+                "seed": int(reference_seed),
+                "posterior_shape": list(np.asarray(posterior).shape),
+                "logz": float(statistics["logz"]),
+                "logzerr": float(statistics["logzerr"]),
+                "kl_posterior_prior": float(statistics["kl_posterior_prior"]),
+                "ncall": int(statistics["ncall"]),
+                "runtime_s": float(statistics["runtime_s"]),
+            },
+            stream,
+            indent=2,
+            sort_keys=True,
+        )
+
+
 def resolve_true_logz(args: argparse.Namespace) -> float:
     if args.true_logz is not None:
         return float(args.true_logz)
@@ -1184,6 +1646,16 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--training-thin must be at least one")
     if args.max_training_samples < 0:
         raise ValueError("--max-training-samples cannot be negative")
+    if args.reference_nlive < 2:
+        raise ValueError("--reference-nlive must be at least two")
+    if args.reference_dlogz <= 0.0:
+        raise ValueError("--reference-dlogz must be positive")
+    if args.jsd_samples < 50:
+        raise ValueError("--jsd-samples must be at least 50")
+    if args.jsd_cv_folds < 2:
+        raise ValueError("--jsd-cv-folds must be at least two")
+    if args.jsd_classifier_max_iter < 1:
+        raise ValueError("--jsd-classifier-max-iter must be positive")
     if args.nismo_proposal_scheme == "en-rwalk" and any(
         value < args.ensemble_walkers for value in args.nlive
     ):
@@ -1287,7 +1759,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ensemble-gaussian-weight", type=float, default=0.15)
     parser.add_argument("--nismo-rwalk-walks", type=int, default=None)
     parser.add_argument("--nismo-rwalk-facc", type=float, default=0.5)
-    parser.add_argument("--nismo-srwalk-steps", type=int, default=25)
+    parser.add_argument("--nismo-srwalk-steps", type=int, default=75)
     parser.add_argument("--max-iterations", type=int, default=10_000)
     parser.add_argument(
         "--max-proposals-per-replacement",
@@ -1296,6 +1768,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-likelihood-calls", type=int, default=None)
     parser.add_argument("--max-wall-time", type=float, default=None)
+
+    parser.add_argument(
+        "--reference-nlive",
+        type=int,
+        default=1000,
+        help="Live points for the cached high-accuracy Dynesty reference posterior.",
+    )
+    parser.add_argument(
+        "--reference-dlogz",
+        type=float,
+        default=0.01,
+        help="Stopping tolerance for the Dynesty reference posterior.",
+    )
+    parser.add_argument(
+        "--jsd-samples",
+        type=int,
+        default=3000,
+        help="Maximum samples from each posterior used in classifier JSD.",
+    )
+    parser.add_argument(
+        "--jsd-cv-folds",
+        type=int,
+        default=3,
+        help="Stratified cross-validation folds for classifier JSD.",
+    )
+    parser.add_argument(
+        "--jsd-classifier-max-iter",
+        type=int,
+        default=100,
+        help="Maximum HistGradientBoosting iterations per JSD CV fold.",
+    )
 
     parser.add_argument(
         "--ncall-metric",
@@ -1374,6 +1877,16 @@ def main() -> int:
             output_dir=output_dir,
             show=args.show,
         )
+        jsd_paths = plot_jsd_summary(
+            summaries=summaries,
+            output_dir=output_dir,
+            show=args.show,
+        )
+        kl_paths = plot_kl_summary(
+            summaries=summaries,
+            output_dir=output_dir,
+            show=args.show,
+        )
         print_summary(summaries)
         print_incomplete_summary(
             rows=rows,
@@ -1382,6 +1895,12 @@ def main() -> int:
         )
         print(f"\nSaved summary: {summary_path}")
         print(f"Saved plots:   {png_path} and {pdf_path}")
+        if jsd_paths is not None:
+            print(f"Saved JSD-ref: {jsd_paths[0]} and {jsd_paths[1]}")
+        else:
+            print("Saved JSD-ref: unavailable (raw rows do not contain JSD values)")
+        if kl_paths is not None:
+            print(f"Saved KL:      {kl_paths[0]} and {kl_paths[1]}")
         return 0
 
     if raw_path.exists() and not args.resume and not args.overwrite:
@@ -1415,6 +1934,79 @@ def main() -> int:
         f"NISMO scheme={args.nismo_proposal_scheme}"
     )
     print(f"Incremental results: {raw_path}")
+    reference_seed = deterministic_seed(
+        args.seed,
+        method_code=9,
+        nlive=args.reference_nlive,
+        repeat=0,
+    )
+    cached_reference = load_reference_cache(output_dir, fingerprint) if args.resume else None
+    if cached_reference is not None:
+        reference_posterior, reference_metadata = cached_reference
+        print(
+            "Loaded cached Dynesty reference posterior: "
+            f"nlive={reference_metadata['nlive']}, shape={tuple(reference_posterior.shape)}"
+        )
+    else:
+        print(
+            "Building Dynesty reference posterior: "
+            f"nlive={args.reference_nlive}, dlogz={args.reference_dlogz}, "
+            f"seed={reference_seed}"
+        )
+        reference_statistics, reference_posterior = run_dynesty(
+            model=model,
+            nlive=args.reference_nlive,
+            seed=reference_seed,
+            dlogz=args.reference_dlogz,
+            bound=args.dynesty_bound,
+            walks=args.dynesty_walks,
+            facc=args.dynesty_facc,
+            progress=args.progress,
+            collect_posterior=True,
+        )
+        if reference_posterior is None:
+            raise RuntimeError("reference Dynesty run did not return posterior samples")
+        save_reference_cache(
+            output_dir=output_dir,
+            posterior=reference_posterior,
+            statistics=reference_statistics,
+            reference_nlive=args.reference_nlive,
+            reference_dlogz=args.reference_dlogz,
+            reference_seed=reference_seed,
+            fingerprint=fingerprint,
+        )
+        print(
+            f"  reference logZ={reference_statistics['logz']:.5f} ± "
+            f"{reference_statistics['logzerr']:.5f}; "
+            f"KL={reference_statistics['kl_posterior_prior']:.4f}; "
+            f"ncall={reference_statistics['ncall']:,}"
+        )
+
+    def diagnostic_jsd(
+        samples: np.ndarray,
+        nlive_value: int,
+        repeat_value: int,
+    ) -> tuple[float, int]:
+        diagnostic_seed = deterministic_seed(
+            args.seed,
+            method_code=7,
+            nlive=nlive_value,
+            repeat=repeat_value,
+        )
+        sample_count = min(
+            len(samples),
+            len(reference_posterior),
+            args.jsd_samples,
+        )
+        value = classifier_jsd_to_reference(
+            posterior_samples=samples,
+            reference_samples=reference_posterior,
+            seed=diagnostic_seed,
+            max_samples=args.jsd_samples,
+            cv_folds=args.jsd_cv_folds,
+            classifier_max_iter=args.jsd_classifier_max_iter,
+        )
+        return value, int(sample_count)
 
     for nlive in args.nlive:
         print(f"\n{'=' * 72}\nnlive = {nlive}\n{'=' * 72}")
@@ -1453,6 +2045,9 @@ def main() -> int:
                     progress=args.progress,
                     collect_posterior=True,
                 )
+                if posterior is None:
+                    raise RuntimeError("Dynesty pilot did not return posterior samples")
+                jsd_to_reference, jsd_sample_count = diagnostic_jsd(posterior, nlive, 0)
                 pilot_row = make_success_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -1469,11 +2064,13 @@ def main() -> int:
                     niter=statistics["niter"],
                     nproposals=0,
                     runtime_s=statistics["runtime_s"],
+                    kl_posterior_prior=statistics["kl_posterior_prior"],
+                    jsd_to_reference=jsd_to_reference,
+                    jsd_reference_samples=jsd_sample_count,
+                    reference_nlive=args.reference_nlive,
                     termination_reason="dlogz",
                 )
                 upsert_row(rows, pilot_row, raw_path)
-                if posterior is None:
-                    raise RuntimeError("Dynesty pilot did not return posterior samples")
                 save_training_cache(
                     output_dir=output_dir,
                     nlive=nlive,
@@ -1485,6 +2082,7 @@ def main() -> int:
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
             except BaseException as error:
@@ -1520,7 +2118,7 @@ def main() -> int:
                 f"repeat={repeat + 1}/{args.repeats}, seed={seed}"
             )
             try:
-                statistics, _ = run_dynesty(
+                statistics, run_posterior = run_dynesty(
                     model=model,
                     nlive=nlive,
                     seed=seed,
@@ -1529,8 +2127,11 @@ def main() -> int:
                     walks=args.dynesty_walks,
                     facc=args.dynesty_facc,
                     progress=args.progress,
-                    collect_posterior=False,
+                    collect_posterior=True,
                 )
+                if run_posterior is None:
+                    raise RuntimeError("Dynesty run did not return posterior samples")
+                jsd_to_reference, jsd_sample_count = diagnostic_jsd(run_posterior, nlive, repeat)
                 row = make_success_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -1547,12 +2148,17 @@ def main() -> int:
                     niter=statistics["niter"],
                     nproposals=0,
                     runtime_s=statistics["runtime_s"],
+                    kl_posterior_prior=statistics["kl_posterior_prior"],
+                    jsd_to_reference=jsd_to_reference,
+                    jsd_reference_samples=jsd_sample_count,
+                    reference_nlive=args.reference_nlive,
                     termination_reason="dlogz",
                 )
                 upsert_row(rows, row, raw_path)
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
             except BaseException as error:
@@ -1665,7 +2271,7 @@ def main() -> int:
                 f"repeat={repeat + 1}/{args.repeats}, seed={seed}"
             )
             try:
-                statistics = run_nismo(
+                statistics, run_posterior = run_nismo(
                     nismo_model=nismo_model,
                     importance_proposal=importance_proposal,
                     nlive=nlive,
@@ -1687,7 +2293,11 @@ def main() -> int:
                     max_likelihood_calls=args.max_likelihood_calls,
                     max_wall_time=args.max_wall_time,
                     progress=args.progress,
+                    collect_posterior=True,
                 )
+                if run_posterior is None:
+                    raise RuntimeError("NISMO run did not return posterior samples")
+                jsd_to_reference, jsd_sample_count = diagnostic_jsd(run_posterior, nlive, repeat)
                 direct = int(statistics["ncall"])
                 status = "success" if statistics["success"] else "incomplete"
                 warning_message = " | ".join(statistics["warnings"])
@@ -1711,6 +2321,10 @@ def main() -> int:
                     n_training_samples=len(training_samples),
                     training_pilot_seed=pilot_seed,
                     training_pilot_repeat=0,
+                    kl_posterior_prior=statistics["kl_posterior_prior"],
+                    jsd_to_reference=jsd_to_reference,
+                    jsd_reference_samples=jsd_sample_count,
+                    reference_nlive=args.reference_nlive,
                     termination_reason=statistics["termination_reason"],
                     status=status,
                     message=warning_message,
@@ -1719,6 +2333,7 @@ def main() -> int:
                 print(
                     f"  logZ={statistics['logz']:.5f} ± "
                     f"{statistics['logzerr']:.5f}; "
+                    f"KL={statistics['kl_posterior_prior']:.4f}; JSD-ref={jsd_to_reference:.5f}; "
                     f"ncall={direct:,}; "
                     f"termination={statistics['termination_reason']}"
                 )
@@ -1765,6 +2380,16 @@ def main() -> int:
         output_dir=output_dir,
         show=args.show,
     )
+    jsd_paths = plot_jsd_summary(
+        summaries=summaries,
+        output_dir=output_dir,
+        show=args.show,
+    )
+    kl_paths = plot_kl_summary(
+        summaries=summaries,
+        output_dir=output_dir,
+        show=args.show,
+    )
     print_summary(summaries)
     print_incomplete_summary(
         rows=rows,
@@ -1774,6 +2399,10 @@ def main() -> int:
     print(f"\nSaved raw runs: {raw_path}")
     print(f"Saved summary:  {summary_path}")
     print(f"Saved plots:    {png_path} and {pdf_path}")
+    if jsd_paths is not None:
+        print(f"Saved JSD-ref:  {jsd_paths[0]} and {jsd_paths[1]}")
+    if kl_paths is not None:
+        print(f"Saved KL:       {kl_paths[0]} and {kl_paths[1]}")
     return 0
 
 
