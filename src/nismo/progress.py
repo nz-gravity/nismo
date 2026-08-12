@@ -68,6 +68,7 @@ class _TqdmProgress:
             unit="it",
             dynamic_ncols=True,
             mininterval=0.2,
+            bar_format="{desc}: iter: {n} [{elapsed}, {rate_fmt}{postfix}]",
         )
         self._postfix: dict[str, str | int] = {}
 
@@ -82,9 +83,10 @@ class _TqdmProgress:
             "eff": f"{info['efficiency_percent']:.1f}%",
             "logZ": f"{info['logz']:.3f}",
             "logZerr": f"{info['logzerr']:.3f}",
+            "H": f"{info['information']:.3f}",
         }
         if "criterion_remaining_dlogz_met" in info:
-            self._postfix["dlogZrem"] = f"{info['remaining_dlogz']:.2e}"
+            self._postfix["dlog(z)"] = f"{info['remaining_dlogz']:.2e}"
         if "criterion_live_logz_error_met" in info:
             self._postfix["liveErr"] = f"{info['live_logz_error']:.2e}"
         if "criterion_live_ess_met" in info:
@@ -95,17 +97,12 @@ class _TqdmProgress:
             self._postfix["prop"] = int(info["proposal_revision"])
         if "criterion_logz_stability_met" in info:
             self._postfix["stable"] = f"{info['logz_stability']:.2e}"
-        self._postfix["stop"] = (
-            f"{int(info['stopping_streak'])}/{int(info['stopping_consecutive'])}"
-        )
+        self._postfix["logPsi*"] = f"{info['threshold']:.3f}"
         self._bar.set_postfix(self._postfix, refresh=False)
         self._bar.update(max(0, iteration - self._bar.n))
 
     def close(self, termination_reason: str) -> None:
-        if termination_reason:
-            self._postfix["stop"] = termination_reason
-            self._bar.set_postfix(self._postfix, refresh=False)
-            self._bar.refresh()
+        del termination_reason
         self._bar.close()
 
 
