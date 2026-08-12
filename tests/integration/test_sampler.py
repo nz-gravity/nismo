@@ -380,9 +380,14 @@ def test_progress_true_renders_standard_terminal_fields(capsys: Any) -> None:
     assert result.success
     assert "logZ" in captured.err
     assert "logZerr" in captured.err
+    assert "H=" in captured.err
     assert "ncall" in captured.err
     assert "eff" in captured.err
-    assert "dlogZrem" in captured.err
+    assert "dlog(z)=" in captured.err
+    assert "logPsi*=" in captured.err
+    assert "iter:" in captured.err
+    assert "stop=" not in captured.err
+    assert "?" not in captured.err
     assert " liveErr=" not in captured.err
     assert " ESSlive=" not in captured.err
     assert " rem=" not in captured.err
@@ -420,7 +425,7 @@ def test_terminal_progress_shows_only_enabled_criterion_metrics(
     assert "liveErr=" in captured.err
     assert "ESSlive=" in captured.err
     assert "stable=" in captured.err
-    assert "dlogZrem=" not in captured.err
+    assert "dlog(z)=" not in captured.err
     assert " rem=" not in captured.err
 
 
