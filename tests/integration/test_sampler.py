@@ -265,6 +265,7 @@ def test_iteration_limit_is_not_scientific_success() -> None:
     assert result.termination_reason == "max_iterations"
     assert result.niter == 3
     assert result.history.iteration.tolist() == [1, 2, 3]
+    assert result.warnings == ()
 
 
 def test_likelihood_call_limit_is_not_scientific_success() -> None:

@@ -119,7 +119,8 @@ NISMOSampler(
     rwalk_settings=None,
     srwalk_settings=None,
     ensemble_rwalk_settings=None,
-    parallel=None,
+    n_workers=1,
+    queue_size=None,
 )
 ```
 
@@ -140,12 +141,16 @@ NISMOSampler.from_posterior_samples(
     rwalk_settings=None,
     srwalk_settings=None,
     ensemble_rwalk_settings=None,
-    parallel=None,
+    n_workers=1,
+    queue_size=None,
 )
 ```
 
 `morph_config` is passed to `MorphProposal.fit`. `sampler.citations` returns a
 list of `(citation, url)` pairs required by the configured replacement method.
+`queue_size=None` resolves to `n_workers`; the default `(1, 1)` path is serial.
+The legacy `parallel=ParallelSettings(...)` keyword remains available for
+backward compatibility and cannot be mixed with the direct arguments.
 
 Run method:
 

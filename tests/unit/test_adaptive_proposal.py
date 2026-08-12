@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from nismo import CallableModel, NISMOSampler, ParallelSettings
+from nismo import CallableModel, NISMOSampler
 from nismo.adaptive import AdaptiveMorphController
 
 pytestmark = pytest.mark.unit
@@ -216,7 +216,8 @@ def test_serial_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
         n_live=10,
         rng=17,
         proposal_batch_size=8,
-        parallel=ParallelSettings(n_workers=1, queue_size=4),
+        n_workers=1,
+        queue_size=4,
     ).run(
         dlogz=1.0e-8,
         max_iterations=12,

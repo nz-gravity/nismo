@@ -89,6 +89,7 @@ sampler = NISMOSampler(
     proposal_scheme="fixed_morph",
     n_live=200,
     rng=42,
+    n_workers=1,
 )
 
 result = sampler.run(
@@ -104,6 +105,10 @@ print(result.success, result.termination_reason)
 Omitting both `dlogz` and `stopping` uses `dlogz=1e-3`. A hard resource limit
 returns a valid partial result with `success=False`; malformed densities and
 missing fixed-importance support raise typed exceptions.
+
+Set `n_workers` directly on `NISMOSampler` to construct replacement candidates
+in parallel. `queue_size` defaults to `n_workers` and can be set explicitly to
+control the FIFO prefetch depth.
 
 ## 5. Use the posterior
 

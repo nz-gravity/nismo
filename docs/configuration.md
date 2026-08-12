@@ -16,7 +16,8 @@ NISMOSampler(
     rwalk_settings=None,
     srwalk_settings=None,
     ensemble_rwalk_settings=None,
-    parallel=None,
+    n_workers=1,
+    queue_size=None,
 )
 ```
 
@@ -101,15 +102,20 @@ evolution. The stretch move includes the `(ndim - 1) * log(z)` Hastings term.
 ## Replacement prefetching
 
 ```python
-from nismo import ParallelSettings
-
-parallel = ParallelSettings(n_workers=8, queue_size=8)
+sampler = NISMOSampler(
+    ...,
+    n_workers=8,
+    queue_size=8,
+)
 ```
 
 `queue_size=None` resolves to `n_workers`. Defaults therefore resolve to one
 worker and a one-item queue, preserving serial behavior. Completed replacements
 are consumed FIFO and revalidated against the current threshold. Larger queues
 can waste likelihood calls when prefetched candidates become stale.
+
+The older `parallel=ParallelSettings(...)` form remains accepted for backward
+compatibility, but it cannot be combined with `n_workers` or `queue_size`.
 
 For `n_workers > 1`, the model, proposal, and their callables must be pickleable.
 Use module-level functions and protect process-starting application code with
