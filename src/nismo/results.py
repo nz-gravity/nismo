@@ -282,7 +282,7 @@ class NISMOResult:
                 "ensemble move history is only valid for proposal_scheme='en-rwalk'"
             )
         expects_srwalk_diagnostics = (
-            self.config.proposal_scheme == "s-rwalk"
+            self.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
             and self.config.srwalk_settings.profile
         )
         if expects_srwalk_diagnostics != (self.srwalk_diagnostics is not None):

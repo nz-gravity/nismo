@@ -10,6 +10,7 @@ from tests.helpers import StandardNormalProposal
 from nismo import (
     ConfigurationError,
     EnsembleRWalkSettings,
+    MORWalkSettings,
     NISMOSampler,
     ParallelSettings,
     RWalkSettings,
@@ -127,6 +128,32 @@ def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
     assert diagnostics.queue_candidates_consumed == result.niter
     assert diagnostics.queue_efficiency < 1.0
     assert np.all(np.diff(result.dead_tie_breakers) >= 0.0)
+
+
+def test_mor_rwalk_switches_to_parallel_srwalk_queue() -> None:
+    result = NISMOSampler(
+        model=ConstantNormalModel(),
+        importance_morph=StandardNormalProposal(),
+        proposal_scheme="mor-rwalk",
+        mor_rwalk_settings=MORWalkSettings(n_proposals=11),
+        srwalk_settings=SRWalkSettings(n_steps=4),
+        n_live=10,
+        rng=88,
+        tie_policy="randomized_plateau",
+        n_workers=2,
+        queue_size=2,
+    ).run(
+        dlogz=0.5,
+        max_iterations=100,
+        max_proposals_per_replacement=20,
+    )
+
+    assert result.success
+    assert np.isnan(result.history.mh_acceptance_fraction[0])
+    assert np.all(np.isfinite(result.history.mh_acceptance_fraction[1:]))
+    diagnostics = result.queue_diagnostics
+    assert diagnostics.queue_candidates_consumed == result.niter - 1
+    assert result.n_likelihood_calls == 11 + diagnostics.prefetch_likelihood_calls
 
 
 def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:

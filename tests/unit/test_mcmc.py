@@ -12,12 +12,13 @@ from nismo import (
     ConfigurationError,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
+    MORWalkSettings,
     NISMOConfig,
     NumericalInvariantError,
     RWalkSettings,
     SRWalkSettings,
 )
-from nismo.constrained import BatchEvaluator, passes_constraint
+from nismo.constrained import BatchEvaluator, EvaluatedBatch, passes_constraint
 from nismo.mcmc import (
     RWalkSampler,
     SRWalkGeometry,
@@ -36,6 +37,7 @@ from nismo.mcmc import (
     eligible_survivor_indices,
     log_metropolis_acceptance_ratio,
 )
+from nismo.sampler import _MorphReplacementPool
 
 pytestmark = pytest.mark.unit
 
@@ -52,6 +54,75 @@ def test_all_proposal_schemes_are_configured(proposal_scheme: str) -> None:
         ensemble_rwalk_settings=settings,
     )
     assert config.proposal_scheme == proposal_scheme
+
+
+def test_mor_rwalk_configuration_requires_a_large_enough_pool() -> None:
+    settings = MORWalkSettings(n_proposals=8)
+    config = NISMOConfig(
+        n_live=5,
+        proposal_scheme="mor-rwalk",
+        mor_rwalk_settings=settings,
+    )
+    assert config.mor_rwalk_settings == settings
+
+    with pytest.raises(ConfigurationError, match="requires mor_rwalk_settings"):
+        NISMOConfig(n_live=5, proposal_scheme="mor-rwalk")
+    with pytest.raises(ConfigurationError, match="n_proposals must be >= n_live"):
+        NISMOConfig(
+            n_live=5,
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=MORWalkSettings(n_proposals=4),
+        )
+    with pytest.raises(
+        ConfigurationError,
+        match="max_likelihood_calls must be >= mor-rwalk n_proposals",
+    ):
+        NISMOConfig(
+            n_live=5,
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=settings,
+            max_likelihood_calls=7,
+        )
+
+
+@pytest.mark.parametrize("value", [0, True])
+def test_mor_rwalk_settings_reject_invalid_pool_sizes(value: object) -> None:
+    with pytest.raises(ConfigurationError, match="n_proposals"):
+        MORWalkSettings(n_proposals=value)  # type: ignore[arg-type]
+
+
+def test_morph_pool_preserves_randomized_stream_order() -> None:
+    evaluated = EvaluatedBatch(
+        theta=np.array([[0.0], [5.0], [1.0]]),
+        log_likelihood=np.array([0.0, 5.0, 1.0]),
+        log_prior=np.zeros(3),
+        log_q0=np.zeros(3),
+        log_psi0=np.array([0.0, 5.0, 1.0]),
+    )
+    pool = _MorphReplacementPool(
+        evaluated=evaluated,
+        indices=np.array([0, 2, 1], dtype=np.int64),
+        tie_breakers=np.zeros(3),
+    )
+
+    first = pool.draw(
+        threshold=0.5,
+        threshold_tie_breaker=0.0,
+        tie_policy="strict",
+    )
+    assert first is not None and first.draw is not None
+    assert first.draw.point.log_psi0 == 1.0
+    assert first.n_proposed == 2
+
+    second = pool.draw(
+        threshold=2.0,
+        threshold_tie_breaker=0.0,
+        tie_policy="strict",
+    )
+    assert second is not None and second.draw is not None
+    assert second.draw.point.log_psi0 == 5.0
+    assert second.n_proposed == 1
+    assert pool.remaining == 0
 
 
 @pytest.mark.parametrize(
