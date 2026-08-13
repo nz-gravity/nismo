@@ -314,7 +314,7 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
         job.model,
         job.importance_morph,
         profile=(
-            job.config.proposal_scheme == "s-rwalk"
+            job.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
             and job.config.srwalk_settings.profile
         ),
     )
@@ -361,7 +361,7 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
             max_likelihood_calls=job.max_likelihood_calls,
             deadline=job.deadline,
         )
-    elif config.proposal_scheme == "s-rwalk":
+    elif config.proposal_scheme in ("s-rwalk", "mor-rwalk"):
         srwalk_controller = SRWalkSampler(
             settings=config.srwalk_settings,
             ndim=job.model.ndim,

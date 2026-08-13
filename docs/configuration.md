@@ -15,6 +15,7 @@ NISMOSampler(
     tie_policy="strict",
     rwalk_settings=None,
     srwalk_settings=None,
+    mor_rwalk_settings=None,
     ensemble_rwalk_settings=None,
     n_workers=1,
     queue_size=None,
@@ -42,6 +43,7 @@ the same path replaces NISMO's standard output files.
 |---|---|---|
 | `fixed_morph` | Rejection draws from fixed `q0` under the current `log_psi0` constraint | Default |
 | `adaptive_morph` | Periodically refits a separate proposal to the live set | Heuristic; evidence may be biased |
+| `mor-rwalk` | Initializes from one pre-evaluated Morph pool, consumes its randomized remainder, then switches permanently to `s-rwalk` | Initial batch must fit the likelihood budget; finite-walk mixing must be calibrated |
 | `rwalk` | Dynesty-style ellipsoidal-ball MH transitions targeting constrained `q0` | Finite-walk mixing must be calibrated |
 | `s-rwalk` | Gaussian-covariance MH transitions targeting constrained `q0` | Finite-walk mixing must be calibrated |
 | `en-rwalk` | Split-ensemble DE/stretch/Gaussian MH mixture targeting constrained `q0` | Finite-walk mixing must be calibrated |
@@ -50,6 +52,31 @@ All MCMC schemes start from eligible surviving live points, never the discarded
 threshold point. Passing the constraint is not enough: the generic acceptance
 ratio also contains the fixed-density ratio `q0(proposed) / q0(current)` and a
 Hastings correction where required.
+
+### Morph-pool then Gaussian random walk
+
+```python
+from nismo import MORWalkSettings, SRWalkSettings
+
+sampler = NISMOSampler(
+    ...,
+    proposal_scheme="mor-rwalk",
+    mor_rwalk_settings=MORWalkSettings(n_proposals=20_000),
+    srwalk_settings=SRWalkSettings(n_steps=75),
+)
+```
+
+`n_proposals` is the total one-time Morph batch and must be at least `n_live`.
+NISMO evaluates the batch together, randomly selects `n_live` members as the
+initial live set, and retains the remainder in randomized order. Each early
+replacement is the first retained proposal satisfying the current constraint.
+When no remaining proposal passes, NISMO discards the exhausted remainder and
+uses `s-rwalk` for every subsequent replacement.
+
+The randomized order is statistically important: sorting the pool and always
+choosing the lowest passing `log_psi0` would bias replacements toward the
+constraint. `max_likelihood_calls`, when supplied, must be at least
+`n_proposals` so that the initial vectorized batch can be completed.
 
 ### Standard random walk
 

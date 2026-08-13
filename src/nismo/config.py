@@ -20,6 +20,7 @@ EnsembleMoveName = Literal["de", "stretch", "gaussian"]
 ProposalScheme = Literal[
     "fixed_morph",
     "adaptive_morph",
+    "mor-rwalk",
     "rwalk",
     "s-rwalk",
     "en-rwalk",
@@ -220,6 +221,23 @@ class SRWalkSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class MORWalkSettings:
+    """Settings for the Morph-pool then ``s-rwalk`` hybrid scheme."""
+
+    n_proposals: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "n_proposals",
+            _positive_integer(
+                self.n_proposals,
+                name="mor-rwalk n_proposals",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EnsembleRWalkSettings:
     """Settings for split-ensemble constrained Metropolis--Hastings moves."""
 
@@ -336,6 +354,8 @@ class NISMOConfig:
         Dynesty-style random-walk Metropolis settings.
     srwalk_settings
         Gaussian-covariance random-walk Metropolis settings.
+    mor_rwalk_settings
+        Initial Morph-pool size for the ``mor-rwalk`` hybrid scheme.
     ensemble_rwalk_settings
         Split-ensemble Metropolis--Hastings mixture settings.
     parallel
@@ -360,6 +380,7 @@ class NISMOConfig:
     proposal_update_interval: int = 25
     rwalk_settings: RWalkSettings = field(default_factory=RWalkSettings)
     srwalk_settings: SRWalkSettings = field(default_factory=SRWalkSettings)
+    mor_rwalk_settings: MORWalkSettings | None = None
     ensemble_rwalk_settings: EnsembleRWalkSettings = field(
         default_factory=EnsembleRWalkSettings
     )
@@ -413,6 +434,7 @@ class NISMOConfig:
         if self.proposal_scheme not in (
             "fixed_morph",
             "adaptive_morph",
+            "mor-rwalk",
             "rwalk",
             "s-rwalk",
             "en-rwalk",
@@ -424,6 +446,18 @@ class NISMOConfig:
             raise ConfigurationError("rwalk_settings must be an RWalkSettings")
         if not isinstance(self.srwalk_settings, SRWalkSettings):
             raise ConfigurationError("srwalk_settings must be an SRWalkSettings")
+        if self.mor_rwalk_settings is not None and not isinstance(
+            self.mor_rwalk_settings,
+            MORWalkSettings,
+        ):
+            raise ConfigurationError(
+                "mor_rwalk_settings must be a MORWalkSettings or None"
+            )
+        if self.proposal_scheme == "mor-rwalk":
+            if self.mor_rwalk_settings is None:
+                raise ConfigurationError("mor-rwalk requires mor_rwalk_settings")
+            if self.mor_rwalk_settings.n_proposals < self.n_live:
+                raise ConfigurationError("mor-rwalk n_proposals must be >= n_live")
         if not isinstance(
             self.ensemble_rwalk_settings,
             EnsembleRWalkSettings,
@@ -445,6 +479,15 @@ class NISMOConfig:
         ):
             raise ConfigurationError(
                 "max_likelihood_calls must be an integer >= n_live"
+            )
+        if (
+            self.proposal_scheme == "mor-rwalk"
+            and self.max_likelihood_calls is not None
+            and self.mor_rwalk_settings is not None
+            and self.max_likelihood_calls < self.mor_rwalk_settings.n_proposals
+        ):
+            raise ConfigurationError(
+                "max_likelihood_calls must be >= mor-rwalk n_proposals"
             )
         if self.max_wall_time is not None and (
             isinstance(self.max_wall_time, bool)

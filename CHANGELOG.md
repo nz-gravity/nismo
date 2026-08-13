@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Added the `mor-rwalk` hybrid replacement scheme. It evaluates one user-sized
+  Morph pool, randomly initializes the live set from that batch, consumes the
+  remaining proposals as a randomized precomputed rejection stream, and
+  switches permanently to `s-rwalk` when the pool cannot meet the constraint.
+
 ## 0.1.4 - 2026-08-12
 
 - Fixed formatting and lint violations in the Gaussian-shell benchmark

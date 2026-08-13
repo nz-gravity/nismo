@@ -180,8 +180,28 @@ Select a scheme through `NISMOSampler(..., proposal_scheme=...)`:
 | Scheme | Replacement mechanism |
 |---|---|
 | `fixed_morph` | Independent constrained rejection draws from the fixed Morph |
+| `mor-rwalk` | One pre-evaluated Morph pool, followed by `s-rwalk` when the pool can no longer meet the constraint |
 | `s-rwalk` | Gaussian-covariance random walk targeting constrained $q_0$ |
 | `en-rwalk` | Split-ensemble differential-evolution, stretch, and Gaussian move mixture |
+
+Configure the hybrid scheme with a total initial pool size. NISMO randomly
+chooses the live set from this batch and retains the other points in randomized
+proposal order:
+
+```python
+from nismo import MORWalkSettings, SRWalkSettings
+
+sampler = NISMOSampler(
+    ...,
+    proposal_scheme="mor-rwalk",
+    mor_rwalk_settings=MORWalkSettings(n_proposals=20_000),
+    srwalk_settings=SRWalkSettings(n_steps=75),
+)
+```
+
+The complete batch is evaluated once. The retained stream is consumed until no
+remaining proposal passes the current `log_psi0` threshold, after which the
+sampler switches permanently to `s-rwalk`.
 
 Finite-length MCMC replacements must be calibrated for the dimension and
 geometry of the target. See the configuration guide for move settings,

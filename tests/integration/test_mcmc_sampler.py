@@ -8,6 +8,7 @@ from nismo import (
     CallableModel,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
+    MORWalkSettings,
     NISMOSampler,
     RWalkSettings,
     SRWalkSettings,
@@ -167,6 +168,42 @@ def test_non_mcmc_history_keeps_nested_efficiency_semantics() -> None:
     np.testing.assert_allclose(
         result.history.acceptance_fraction,
         np.arange(1, result.niter + 1) / np.cumsum(result.history.proposals),
+    )
+
+
+def test_mor_rwalk_uses_one_morph_batch_then_switches_to_srwalk() -> None:
+    model, proposal = _constant_problem()
+    results = [
+        NISMOSampler(
+            model=model,
+            importance_morph=proposal,
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=MORWalkSettings(n_proposals=11),
+            srwalk_settings=SRWalkSettings(n_steps=4),
+            n_live=10,
+            rng=88,
+            tie_policy="randomized_plateau",
+        ).run(
+            dlogz=0.5,
+            max_iterations=100,
+            max_proposals_per_replacement=20,
+        )
+        for _ in range(2)
+    ]
+    first, second = results
+
+    assert first.success
+    assert first.niter == 10
+    assert first.n_likelihood_calls == 47
+    assert first.n_proposals == 37
+    assert np.isnan(first.history.mh_acceptance_fraction[0])
+    assert first.history.mcmc_completed[0] == 0
+    assert np.all(np.isfinite(first.history.mh_acceptance_fraction[1:]))
+    assert np.all(first.history.mcmc_completed[1:] == 4)
+    np.testing.assert_array_equal(first.dead_points, second.dead_points)
+    np.testing.assert_array_equal(
+        first.history.mcmc_completed,
+        second.history.mcmc_completed,
     )
 
 

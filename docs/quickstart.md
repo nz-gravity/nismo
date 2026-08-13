@@ -107,6 +107,23 @@ Omitting both `dlogz` and `stopping` uses `dlogz=1e-3`. A hard resource limit
 returns a valid partial result with `success=False`; malformed densities and
 missing fixed-importance support raise typed exceptions.
 
+To evaluate one large Morph batch up front and fall back to the
+Gaussian-covariance walk only when that pool is exhausted, use:
+
+```python
+from nismo import MORWalkSettings, SRWalkSettings
+
+sampler = NISMOSampler(
+    model=model,
+    importance_morph=importance_morph,
+    proposal_scheme="mor-rwalk",
+    mor_rwalk_settings=MORWalkSettings(n_proposals=20_000),
+    srwalk_settings=SRWalkSettings(n_steps=75),
+    n_live=200,
+    rng=42,
+)
+```
+
 `output_path` creates the directory if necessary and automatically saves valid
 complete or partial results as:
 

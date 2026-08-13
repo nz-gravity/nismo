@@ -98,6 +98,13 @@ Every `RunHistory` array has shape `(niter,)`. Important groups are:
 `logz_stability` is `NaN` until its configured window is full. Non-MCMC modes
 store `NaN` for MCMC fractions and zero for MCMC counts.
 
+For `mor-rwalk`, Morph-pool iterations use those non-MCMC sentinel values and
+iterations after the permanent fallback contain ordinary `s-rwalk`
+diagnostics. The initial batch is visible immediately in cumulative
+`likelihood_calls`; its `n_proposals - n_live` replacement portion is included
+immediately in the `acceptance_fraction` denominator. Per-iteration `proposals`
+records how many retained pool members were inspected for that replacement.
+
 ## Proposal and queue records
 
 `result.proposal_updates` records every scheduled adaptive refit, including the
