@@ -286,11 +286,11 @@ def parse_args() -> argparse.Namespace:
         help="hard cap; defaults to max(10000, 25 * n_live)",
     )
     parser.add_argument("--seed", type=int, default=20260811)
-    parser.add_argument("--morph-type", default="2_group")
+    parser.add_argument("--morph-type", default="silverman")
     parser.add_argument(
         "--proposal-scheme",
         choices=("rwalk", "s-rwalk", "en-rwalk"),
-        default="en-rwalk",
+        default="s-rwalk",
         help="NISMO constrained replacement kernel; use s-rwalk for the s-walk variant",
     )
     parser.add_argument("--audit-points", type=int, default=32)
