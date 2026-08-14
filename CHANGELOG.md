@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Made `s-rwalk` chain lengths adaptive from recent MH acceptance, with bounded
+  growth, a zero-acceptance scale contraction, queue-epoch-safe adaptation, and
+  an optional `zero_move_policy="stop"` that prevents duplicate replacements by
+  terminating with `srwalk_stalled`.
 - Added the `mor-rwalk` hybrid replacement scheme. It evaluates one user-sized
   Morph pool, randomly initializes the live set from that batch, consumes the
   remaining proposals as a randomized precomputed rejection stream, and
