@@ -164,6 +164,13 @@ class SRWalkSettings:
     n_steps: int = 75
     scale: float | None = None
     facc: float = 0.5
+    dynamic_steps: bool = True
+    max_steps: int = 5_000
+    target_zero_move_probability: float = 1.0e-3
+    acceptance_window: int = 20
+    max_step_growth: float = 2.0
+    zero_accept_scale_factor: float = 0.5
+    zero_move_policy: Literal["allow", "stop"] = "allow"
     covariance_shrinkage: float = 0.25
     covariance_jitter: float = 1.0e-10
     covariance_update_interval: int = 1
@@ -183,6 +190,47 @@ class SRWalkSettings:
                 _positive_finite(self.scale, name="s-rwalk scale"),
             )
         object.__setattr__(self, "facc", _finite(self.facc, name="s-rwalk facc"))
+        if not isinstance(self.dynamic_steps, bool):
+            raise ConfigurationError("s-rwalk dynamic_steps must be a boolean")
+        max_steps = _positive_integer(self.max_steps, name="s-rwalk max_steps")
+        if max_steps < self.n_steps:
+            raise ConfigurationError("s-rwalk max_steps must be >= n_steps")
+        object.__setattr__(self, "max_steps", max_steps)
+        target = _positive_finite(
+            self.target_zero_move_probability,
+            name="s-rwalk target_zero_move_probability",
+        )
+        if target >= 1.0:
+            raise ConfigurationError(
+                "s-rwalk target_zero_move_probability must be less than one"
+            )
+        object.__setattr__(self, "target_zero_move_probability", target)
+        object.__setattr__(
+            self,
+            "acceptance_window",
+            _positive_integer(
+                self.acceptance_window,
+                name="s-rwalk acceptance_window",
+            ),
+        )
+        growth = _positive_finite(
+            self.max_step_growth,
+            name="s-rwalk max_step_growth",
+        )
+        if growth < 1.0:
+            raise ConfigurationError("s-rwalk max_step_growth must be >= 1")
+        object.__setattr__(self, "max_step_growth", growth)
+        zero_scale = _positive_finite(
+            self.zero_accept_scale_factor,
+            name="s-rwalk zero_accept_scale_factor",
+        )
+        if zero_scale > 1.0:
+            raise ConfigurationError("s-rwalk zero_accept_scale_factor must be <= 1")
+        object.__setattr__(self, "zero_accept_scale_factor", zero_scale)
+        if self.zero_move_policy not in ("allow", "stop"):
+            raise ConfigurationError(
+                "s-rwalk zero_move_policy must be 'allow' or 'stop'"
+            )
         object.__setattr__(
             self,
             "covariance_shrinkage",
