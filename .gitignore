@@ -1,3 +1,6 @@
+*test*.sh
+*.log
+
 __pycache__/
 *.py[cod]
 *.egg-info/

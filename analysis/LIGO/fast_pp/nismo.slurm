@@ -35,4 +35,6 @@ fi
 srun python "${SCRIPT_DIR}/nismo_computation.py" \
 	"${SLURM_ARRAY_TASK_ID}" \
 	--result-path "${RESULT_PATH}" \
-	--output-dir "${RESULT_ROOT}/seed_${SLURM_ARRAY_TASK_ID}"
+	--output-dir "${RESULT_ROOT}/seed_${SLURM_ARRAY_TASK_ID}" \
+	--proposal-scheme s-rwalk \
+	--n-live 2000
