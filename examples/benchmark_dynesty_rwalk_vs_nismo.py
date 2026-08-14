@@ -612,6 +612,7 @@ def run_nismo(
             n_steps=srwalk_steps,
         )
 
+    sampler_kwargs["parallel"] = ParallelSettings(n_workers=4)
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
     result = sampler.run(
