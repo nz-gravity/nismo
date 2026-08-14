@@ -248,10 +248,10 @@ uv sync --extra dev
 ```
 
 If you also want the LVK analysis workflow under
-`analysis/LIGO/fast_pp`, install its dedicated uv group as well:
+`analysis/LIGO/fast_pp`, install the matching `lvk` extra:
 
 ```bash
-uv sync --extra dev --group lvk
+uv sync --extra dev --extra lvk
 ```
 
 Run the development checks and build the package:

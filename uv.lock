@@ -2034,13 +2034,18 @@ dev = [
     { name = "tqdm" },
     { name = "twine" },
 ]
-ligo = [
+lvk = [
     { name = "bilby" },
+    { name = "dynesty" },
     { name = "gwpy", version = "3.0.14", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "gwpy", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "lalsuite" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "morphz" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "tqdm" },
 ]
 morph = [
     { name = "morphz" },
@@ -2057,57 +2062,38 @@ progress = [
 dev = [
     { name = "dynesty" },
 ]
-lvk = [
-    { name = "bilby" },
-    { name = "dynesty" },
-    { name = "gwpy", version = "3.0.14", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "gwpy", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "lalsuite" },
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "morphz" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "tqdm" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "bilby", marker = "extra == 'ligo'", specifier = ">=2.8.2" },
+    { name = "bilby", marker = "extra == 'lvk'", specifier = ">=2.8.2" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
-    { name = "gwpy", marker = "extra == 'ligo'", specifier = ">=3.0.14" },
-    { name = "lalsuite", marker = "extra == 'ligo'", specifier = ">=7.26.15" },
+    { name = "dynesty", marker = "extra == 'lvk'", specifier = ">=3.1.0" },
+    { name = "gwpy", marker = "extra == 'lvk'", specifier = ">=3.0.14" },
+    { name = "lalsuite", marker = "extra == 'lvk'", specifier = ">=7.26.15" },
     { name = "matplotlib", marker = "extra == 'all'", specifier = ">=3.7" },
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.7" },
+    { name = "matplotlib", marker = "extra == 'lvk'", specifier = ">=3.7" },
     { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.7" },
     { name = "morphz", marker = "extra == 'all'", specifier = ">=0.4.1" },
     { name = "morphz", marker = "extra == 'dev'", specifier = ">=0.4.1" },
+    { name = "morphz", marker = "extra == 'lvk'", specifier = ">=0.4.1" },
     { name = "morphz", marker = "extra == 'morph'", specifier = ">=0.4.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "pandas", marker = "extra == 'ligo'", specifier = ">=2.2" },
+    { name = "pandas", marker = "extra == 'lvk'", specifier = ">=2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.10" },
     { name = "tqdm", marker = "extra == 'all'", specifier = ">=4.66" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.66" },
+    { name = "tqdm", marker = "extra == 'lvk'", specifier = ">=4.66" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.66" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "dynesty", specifier = ">=3.1.0" }]
-lvk = [
-    { name = "bilby", specifier = ">=2.8.2" },
-    { name = "dynesty", specifier = ">=3.1.0" },
-    { name = "gwpy", specifier = ">=3.0.14" },
-    { name = "lalsuite", specifier = ">=7.26.15" },
-    { name = "matplotlib", specifier = ">=3.7" },
-    { name = "morphz", specifier = ">=0.4.1" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "tqdm", specifier = ">=4.66" },
-]
 
 [[package]]
 name = "numpy"

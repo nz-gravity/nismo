@@ -5,14 +5,14 @@
 From the repository root, create the uv environment for this LVK analysis:
 
 ```bash
-uv sync --group lvk
+uv sync --extra lvk
 ```
 
 If you are also modifying NISMO itself, use the development environment plus
-the LVK group:
+the same LVK extra:
 
 ```bash
-uv sync --extra dev --group lvk
+uv sync --extra dev --extra lvk
 ```
 
 ```csv
@@ -71,7 +71,7 @@ smaller Dynesty posterior, keep the low-live-point Dynesty result isolated from
 the production result:
 
 ```bash
-SLURM_CPUS_PER_TASK=4 uv run --extra morph --extra ligo \
+SLURM_CPUS_PER_TASK=4 uv run --extra lvk \
   python analysis/LIGO/fast_pp/pp_analysis.py \
   --index 48 --sampler dynesty --nlive 500 \
   --output-dir analysis/LIGO/fast_pp/outdir/seed_48/dynesty_nlive500 \
@@ -85,7 +85,7 @@ Then run NISMO with the production live count, using only that new posterior as
 its proposal-training input:
 
 ```bash
-uv run --extra morph --extra ligo \
+uv run --extra lvk \
   python analysis/LIGO/fast_pp/nismo_computation.py 48 \
   --result-path analysis/LIGO/fast_pp/outdir/seed_48/dynesty_nlive500/dynesty_nlive500_result.json \
   --output-dir analysis/LIGO/fast_pp/outdir/seed_48/nismo_from_dynesty_nlive500 \

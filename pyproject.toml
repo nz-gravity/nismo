@@ -60,11 +60,15 @@ dev = [
   "tqdm>=4.66",
   "twine>=5",
 ]
-ligo = [
-    "bilby>=2.8.2",
-    "gwpy>=3.0.14",
-    "lalsuite>=7.26.15",
+lvk = [
+  "bilby>=2.8.2",
+  "dynesty>=3.1.0",
+  "gwpy>=3.0.14",
+  "lalsuite>=7.26.15",
+  "matplotlib>=3.7",
+  "morphZ>=0.4.1",
   "pandas>=2.2",
+  "tqdm>=4.66",
 ]
 
 [project.urls]
@@ -133,14 +137,4 @@ skip_covered = true
 [dependency-groups]
 dev = [
     "dynesty>=3.1.0",
-]
-lvk = [
-  "bilby>=2.8.2",
-  "dynesty>=3.1.0",
-  "gwpy>=3.0.14",
-  "lalsuite>=7.26.15",
-  "matplotlib>=3.7",
-  "morphZ>=0.4.1",
-  "pandas>=2.2",
-  "tqdm>=4.66",
 ]
