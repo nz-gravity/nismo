@@ -98,6 +98,13 @@ settings = SRWalkSettings(
     n_steps=25,
     scale=None,
     facc=0.5,
+    dynamic_steps=True,
+    max_steps=5_000,
+    target_zero_move_probability=1e-3,
+    acceptance_window=20,
+    max_step_growth=2.0,
+    zero_accept_scale_factor=0.5,
+    zero_move_policy="allow",
     covariance_shrinkage=0.1,
     covariance_jitter=1e-10,
     covariance_update_interval=1,
@@ -116,6 +123,25 @@ a factor; its default of one refreshes at every serial replacement or queue
 snapshot. `covariance_rebuild_interval=None` reconstructs mean and scatter from
 the complete live set every `n_live` commits to limit floating-point drift.
 `scale=None` starts at `2.38 / sqrt(ndim)` and then adapts toward `facc`.
+
+By default, `s-rwalk` also adapts the length of the next complete walk from the
+recent MH acceptance rate. It selects enough transitions to make the estimated
+probability of zero accepted moves no larger than
+`target_zero_move_probability`, subject to `n_steps`, `max_steps`, and the
+per-update `max_step_growth`. A queue epoch uses one frozen length and adapts
+only after every prefetched job in that epoch has completed.
+
+If an entire walk or queue epoch accepts nothing, the next length grows by
+`max_step_growth` and the proposal scale is additionally multiplied by
+`zero_accept_scale_factor`. This avoids conditioning a replacement on eventual
+acceptance, which would change the invariant MH distribution. Consequently,
+the default `zero_move_policy="allow"` retains a rare valid self-transition.
+Use `zero_move_policy="stop"` to terminate with `srwalk_stalled` instead of
+inserting a duplicate survivor. Set `dynamic_steps=False` to recover a fixed
+`n_steps` controller.
+
+The actual length and movement outcome of every replacement are stored in
+`result.history.mcmc_completed` and `result.history.mcmc_moved`.
 
 Set `profile=True` to populate `result.srwalk_diagnostics` with component
 timings, factor refresh counts, squared displacement, and stale-candidate
