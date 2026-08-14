@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.helpers import StandardNormalProposal
+from tests.helpers import StandardNormalProposal, UniformProposal
 
 from nismo import (
     CallableModel,
@@ -32,7 +32,7 @@ def _constant_problem() -> tuple[CallableModel, StandardNormalProposal]:
     ("proposal_scheme", "settings"),
     [
         ("rwalk", RWalkSettings(walks=4)),
-        ("s-rwalk", SRWalkSettings(n_steps=4)),
+        ("s-rwalk", SRWalkSettings(n_steps=4, dynamic_steps=False)),
         (
             "en-rwalk",
             EnsembleRWalkSettings(n_walkers=4, n_sweeps=1),
@@ -179,7 +179,7 @@ def test_mor_rwalk_uses_one_morph_batch_then_switches_to_srwalk() -> None:
             importance_morph=proposal,
             proposal_scheme="mor-rwalk",
             mor_rwalk_settings=MORWalkSettings(n_proposals=11),
-            srwalk_settings=SRWalkSettings(n_steps=4),
+            srwalk_settings=SRWalkSettings(n_steps=4, dynamic_steps=False),
             n_live=10,
             rng=88,
             tie_policy="randomized_plateau",
@@ -316,3 +316,36 @@ def test_srwalk_diagnostics_are_opt_in() -> None:
         max_proposals_per_replacement=20,
     )
     assert result.srwalk_diagnostics is None
+
+
+def test_srwalk_zero_acceptance_lengthens_the_next_complete_walk() -> None:
+    proposal = UniformProposal()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda theta: np.full(len(theta), np.log(2.5)),
+        log_prior_fn=proposal.log_prob,
+    )
+    result = NISMOSampler(
+        model=model,
+        importance_morph=proposal,
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(
+            n_steps=4,
+            scale=1.0e12,
+            max_steps=8,
+            max_step_growth=2.0,
+        ),
+        n_live=10,
+        rng=192,
+        tie_policy="randomized_plateau",
+    ).run(
+        dlogz=1.0e-6,
+        max_iterations=2,
+        max_proposals_per_replacement=8,
+    )
+
+    assert result.termination_reason == "max_iterations"
+    np.testing.assert_array_equal(result.history.mcmc_completed, [4, 8])
+    np.testing.assert_array_equal(result.history.mcmc_accepted, [0, 0])
+    np.testing.assert_array_equal(result.history.mcmc_moved, [0, 0])
