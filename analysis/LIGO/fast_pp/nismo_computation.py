@@ -27,6 +27,12 @@ from typing import Any
 
 import numpy as np
 
+NISMO_PROPOSAL_SCHEME = "s-rwalk"
+from nismo import MorphProposal, NISMOSampler, ParallelSettings
+
+
+parallel_settings = ParallelSettings(n_workers=4, queue_size=4)
+
 
 def posterior_parameter_names(result: Any) -> tuple[str, ...]:
     """Return the coordinates actually sampled by Bilby, in result order."""
@@ -96,12 +102,20 @@ class BilbyLIGOModel:
         parameters.update(self.fixed_values)
         return parameters
 
+    def _log_sampled_prior(self, sampled_values: dict[str, float]) -> float:
+        """Return a valid log density, treating numerical failures as no support.
+
+        Bilby's compound priors can return NaN at invalid proposal points rather
+        than ``-np.inf``.  Those points have zero posterior integrand and must
+        be rejected before they reach the likelihood or NISMO's strict model
+        output validation.
+        """
+        value = float(self.sampled_priors.ln_prob(sampled_values))
+        return value if np.isfinite(value) else -np.inf
+
     def log_prior(self, theta: np.ndarray) -> np.ndarray:
         return np.asarray(
-            [
-                self.sampled_priors.ln_prob(self._sampled_parameters(row))
-                for row in theta
-            ],
+            [self._log_sampled_prior(self._sampled_parameters(row)) for row in theta],
             dtype=float,
         )
 
@@ -111,7 +125,7 @@ class BilbyLIGOModel:
             sampled_values = self._sampled_parameters(row)
             # A KDE proposal has tails beyond the physical prior.  Do not pass
             # those points to LAL: their posterior integrand is exactly zero.
-            if not np.isfinite(self.sampled_priors.ln_prob(sampled_values)):
+            if not np.isfinite(self._log_sampled_prior(sampled_values)):
                 values[index] = -np.inf
                 continue
             values[index] = self.likelihood.log_likelihood(self._parameters(row))
@@ -192,12 +206,10 @@ def run_nismo(
     dlogz: float,
     seed: int,
     morph_type: str,
-    proposal_scheme: str,
     max_iterations: int | None,
     progress: bool,
 ) -> tuple[Any, Any]:
     """Fit one fixed Morph proposal and run a fresh NISMO calculation."""
-    from nismo import MorphProposal, NISMOSampler, ParallelSettings
 
     proposal = MorphProposal.fit(
         samples,
@@ -208,10 +220,10 @@ def run_nismo(
     sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
-        proposal_scheme=proposal_scheme,
+        proposal_scheme=NISMO_PROPOSAL_SCHEME,
         n_live=n_live,
         rng=seed,
-        parallel=ParallelSettings(n_workers=4, queue_size=4),
+        parallel=parallel_settings,
     )
     run_kwargs: dict[str, Any] = {"dlogz": dlogz, "progress": progress}
     if max_iterations is not None:
@@ -231,7 +243,6 @@ def result_payload(
     seed: int,
     n_live: int,
     dlogz: float,
-    proposal_scheme: str,
     max_iterations: int | None,
     runtime_seconds: float,
 ) -> dict[str, Any]:
@@ -244,7 +255,7 @@ def result_payload(
         "dlogz": dlogz,
         "max_iterations": max_iterations,
         "seed": seed,
-        "proposal_scheme": proposal_scheme,
+        "proposal_scheme": NISMO_PROPOSAL_SCHEME,
         "parallel": {"n_workers": 4, "queue_size": 4},
         "morph_metadata": {
             "selected_groups": [
@@ -287,12 +298,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20260811)
     parser.add_argument("--morph-type", default="silverman")
-    parser.add_argument(
-        "--proposal-scheme",
-        choices=("rwalk", "s-rwalk", "en-rwalk"),
-        default="s-rwalk",
-        help="NISMO constrained replacement kernel; use s-rwalk for the s-walk variant",
-    )
     parser.add_argument("--audit-points", type=int, default=32)
     parser.add_argument(
         "--progress",
@@ -391,7 +396,6 @@ def main() -> None:
         dlogz=args.dlogz,
         seed=args.seed,
         morph_type=args.morph_type,
-        proposal_scheme=args.proposal_scheme,
         max_iterations=max_iterations,
         progress=args.progress,
     )
@@ -407,7 +411,6 @@ def main() -> None:
         seed=args.seed,
         n_live=args.n_live,
         dlogz=args.dlogz,
-        proposal_scheme=args.proposal_scheme,
         max_iterations=max_iterations,
         runtime_seconds=nismo_runtime_seconds,
     )

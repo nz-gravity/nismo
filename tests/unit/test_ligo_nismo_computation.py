@@ -77,3 +77,36 @@ def test_default_max_iterations_scales_with_live_count() -> None:
     assert RUNNER.default_max_iterations(100) == 10_000
     assert RUNNER.default_max_iterations(500) == 12_500
     assert RUNNER.default_max_iterations(2_000) == 50_000
+
+
+def test_ligo_runner_is_fixed_to_srwalk() -> None:
+    assert RUNNER.NISMO_PROPOSAL_SCHEME == "s-rwalk"
+
+
+class _NaNPrior:
+    def ln_prob(self, parameters: dict[str, float]) -> float:
+        return np.nan if parameters["x"] < 0.0 else -0.5 * parameters["x"] ** 2
+
+
+class _CountingLikelihood:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def log_likelihood(self, parameters: dict[str, float]) -> float:
+        self.calls += 1
+        return -(parameters["x"] ** 2)
+
+
+def test_bilby_model_converts_nonfinite_prior_to_zero_support() -> None:
+    likelihood = _CountingLikelihood()
+    model = RUNNER.BilbyLIGOModel(
+        parameter_names=("x",),
+        likelihood=likelihood,
+        sampled_priors=_NaNPrior(),
+        fixed_values={},
+    )
+    theta = np.array([[-1.0], [2.0]])
+
+    np.testing.assert_allclose(model.log_prior(theta), [-np.inf, -2.0])
+    np.testing.assert_allclose(model.log_likelihood(theta), [-np.inf, -4.0])
+    assert likelihood.calls == 1
