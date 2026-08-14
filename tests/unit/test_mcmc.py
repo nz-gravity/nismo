@@ -15,9 +15,9 @@ from nismo import (
     MORWalkSettings,
     NISMOConfig,
     NumericalInvariantError,
-    RWalkSettings,
     SRWalkSettings,
 )
+from nismo.config import RWalkSettings
 from nismo.constrained import BatchEvaluator, EvaluatedBatch, passes_constraint
 from nismo.mcmc import (
     RWalkSampler,
@@ -44,7 +44,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     "proposal_scheme",
-    ["fixed_morph", "adaptive_morph", "rwalk", "s-rwalk", "en-rwalk"],
+    ["fixed_morph", "adaptive_morph", "s-rwalk", "en-rwalk"],
 )
 def test_all_proposal_schemes_are_configured(proposal_scheme: str) -> None:
     settings = EnsembleRWalkSettings(n_walkers=4)

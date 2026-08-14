@@ -346,8 +346,8 @@ class NISMOSampler:
         ``"mor-rwalk"`` starts from one pre-evaluated Morph pool and switches
         permanently to ``s-rwalk`` when that pool cannot satisfy the current
         constraint.
-        ``"rwalk"``, ``"s-rwalk"``, and ``"en-rwalk"`` apply constrained
-        Metropolis kernels invariant under the fixed importance density.
+        ``"s-rwalk"`` and ``"en-rwalk"`` apply constrained Metropolis kernels
+        invariant under the fixed importance density.
     proposal_update_interval
         Completed iterations between adaptive proposal refits.
     n_live
@@ -359,8 +359,6 @@ class NISMOSampler:
         Independent proposal points evaluated per constrained-rejection batch.
     tie_policy
         ``"strict"`` or lexicographic ``"randomized_plateau"``.
-    rwalk_settings
-        Optional immutable Dynesty-style random-walk settings.
     srwalk_settings
         Optional immutable Gaussian-covariance random-walk settings.
     mor_rwalk_settings
@@ -391,7 +389,6 @@ class NISMOSampler:
         rng: int | np.random.Generator,
         proposal_batch_size: int = 64,
         tie_policy: TiePolicy = "strict",
-        rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         mor_rwalk_settings: MORWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
@@ -421,9 +418,7 @@ class NISMOSampler:
         self.rng = _as_generator(rng)
         self.proposal_batch_size = proposal_batch_size
         self.tie_policy = tie_policy
-        self.rwalk_settings = (
-            RWalkSettings() if rwalk_settings is None else rwalk_settings
-        )
+        self.rwalk_settings = RWalkSettings()
         self.srwalk_settings = (
             SRWalkSettings() if srwalk_settings is None else srwalk_settings
         )
@@ -448,7 +443,6 @@ class NISMOSampler:
             proposal_scheme=proposal_scheme,
             proposal_update_interval=proposal_update_interval,
             tie_policy=tie_policy,
-            rwalk_settings=self.rwalk_settings,
             srwalk_settings=self.srwalk_settings,
             mor_rwalk_settings=self.mor_rwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,
@@ -458,15 +452,13 @@ class NISMOSampler:
         self.n_workers = resolved_parallel.n_workers
         self.queue_size = resolved_parallel.queue_size
         self.output_path = normalize_output_path(output_path)
-        if proposal_scheme == "rwalk":
-            RWalkSampler(settings=self.rwalk_settings, ndim=model.ndim)
         if proposal_scheme in ("s-rwalk", "mor-rwalk"):
             SRWalkSampler(settings=self.srwalk_settings, ndim=model.ndim)
 
     @property
     def citations(self) -> list[tuple[str, str]]:
         """Return citations declared by the configured sampling method."""
-        if self.proposal_scheme in ("rwalk", "s-rwalk", "mor-rwalk"):
+        if self.proposal_scheme in ("s-rwalk", "mor-rwalk"):
             return list(RWALK_CITATIONS)
         return []
 
@@ -483,7 +475,6 @@ class NISMOSampler:
         proposal_scheme: ProposalScheme = "fixed_morph",
         proposal_update_interval: int = 25,
         tie_policy: TiePolicy = "strict",
-        rwalk_settings: RWalkSettings | None = None,
         srwalk_settings: SRWalkSettings | None = None,
         mor_rwalk_settings: MORWalkSettings | None = None,
         ensemble_rwalk_settings: EnsembleRWalkSettings | None = None,
@@ -511,7 +502,6 @@ class NISMOSampler:
             proposal_scheme=proposal_scheme,
             proposal_update_interval=proposal_update_interval,
             tie_policy=tie_policy,
-            rwalk_settings=rwalk_settings,
             srwalk_settings=srwalk_settings,
             mor_rwalk_settings=mor_rwalk_settings,
             ensemble_rwalk_settings=ensemble_rwalk_settings,
@@ -580,7 +570,6 @@ class NISMOSampler:
             proposal_batch_size=self.proposal_batch_size,
             proposal_scheme=self.proposal_scheme,
             proposal_update_interval=self.proposal_update_interval,
-            rwalk_settings=self.rwalk_settings,
             srwalk_settings=self.srwalk_settings,
             mor_rwalk_settings=self.mor_rwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,

@@ -9,7 +9,6 @@ from .config import (
     NISMOConfig,
     ParallelSettings,
     ProposalScheme,
-    RWalkSettings,
     SRWalkSettings,
 )
 from .diagnostics import RunDiagnostics, posterior_ess, summarize
@@ -73,7 +72,6 @@ __all__ = [
     "ProposalSupportError",
     "ProposalUpdateRecord",
     "QueueDiagnostics",
-    "RWalkSettings",
     "RefittableProposal",
     "ReplacementResult",
     "ReplacementSnapshot",

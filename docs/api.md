@@ -116,7 +116,6 @@ NISMOSampler(
     rng,
     proposal_batch_size=64,
     tie_policy="strict",
-    rwalk_settings=None,
     srwalk_settings=None,
     mor_rwalk_settings=None,
     ensemble_rwalk_settings=None,
@@ -140,7 +139,6 @@ NISMOSampler.from_posterior_samples(
     proposal_scheme="fixed_morph",
     proposal_update_interval=25,
     tie_policy="strict",
-    rwalk_settings=None,
     srwalk_settings=None,
     mor_rwalk_settings=None,
     ensemble_rwalk_settings=None,
@@ -186,7 +184,6 @@ NISMOConfig(
     proposal_batch_size=64,
     proposal_scheme="fixed_morph",
     proposal_update_interval=25,
-    rwalk_settings=RWalkSettings(),
     srwalk_settings=SRWalkSettings(),
     mor_rwalk_settings=None,
     ensemble_rwalk_settings=EnsembleRWalkSettings(),
@@ -205,8 +202,6 @@ The sampler resolves and stores this complete validated record in
 ### Proposal settings
 
 ```python
-RWalkSettings(walks=None, facc=0.5, ncdim=None)
-
 MORWalkSettings(n_proposals)
 
 SRWalkSettings(

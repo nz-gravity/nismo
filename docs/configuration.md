@@ -13,7 +13,6 @@ NISMOSampler(
     rng,
     proposal_batch_size=64,
     tie_policy="strict",
-    rwalk_settings=None,
     srwalk_settings=None,
     mor_rwalk_settings=None,
     ensemble_rwalk_settings=None,
@@ -44,7 +43,6 @@ the same path replaces NISMO's standard output files.
 | `fixed_morph` | Rejection draws from fixed `q0` under the current `log_psi0` constraint | Default |
 | `adaptive_morph` | Periodically refits a separate proposal to the live set | Heuristic; evidence may be biased |
 | `mor-rwalk` | Initializes from one pre-evaluated Morph pool, consumes its randomized remainder, then switches permanently to `s-rwalk` | Initial batch must fit the likelihood budget; finite-walk mixing must be calibrated |
-| `rwalk` | Dynesty-style ellipsoidal-ball MH transitions targeting constrained `q0` | Finite-walk mixing must be calibrated |
 | `s-rwalk` | Gaussian-covariance MH transitions targeting constrained `q0` | Finite-walk mixing must be calibrated |
 | `en-rwalk` | Split-ensemble DE/stretch/Gaussian MH mixture targeting constrained `q0` | Finite-walk mixing must be calibrated |
 
@@ -77,17 +75,6 @@ The randomized order is statistically important: sorting the pool and always
 choosing the lowest passing `log_psi0` would bias replacements toward the
 constraint. `max_likelihood_calls`, when supplied, must be at least
 `n_proposals` so that the initial vectorized batch can be completed.
-
-### Standard random walk
-
-```python
-from nismo import RWalkSettings
-
-settings = RWalkSettings(walks=None, facc=0.5, ncdim=None)
-```
-
-`walks=None` resolves to `model.ndim + 20`. The scale starts at one and adapts
-toward `facc`. `ncdim`, when supplied, must equal the full model dimension.
 
 ### Gaussian-covariance random walk
 

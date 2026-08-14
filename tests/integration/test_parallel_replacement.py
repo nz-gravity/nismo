@@ -13,7 +13,6 @@ from nismo import (
     MORWalkSettings,
     NISMOSampler,
     ParallelSettings,
-    RWalkSettings,
     SRWalkSettings,
 )
 
@@ -57,7 +56,6 @@ class ConstantUniformModel(ConstantNormalModel):
 @pytest.mark.parametrize(
     ("proposal_scheme", "settings"),
     [
-        ("rwalk", {"rwalk_settings": RWalkSettings(walks=4)}),
         ("s-rwalk", {"srwalk_settings": SRWalkSettings(n_steps=4)}),
         (
             "en-rwalk",
@@ -119,8 +117,8 @@ def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
     result = NISMOSampler(
         model=ConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
-        proposal_scheme="rwalk",
-        rwalk_settings=RWalkSettings(walks=4),
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(n_steps=4, dynamic_steps=False),
         n_live=10,
         rng=88,
         tie_policy="randomized_plateau",
@@ -196,8 +194,8 @@ def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:
     kwargs = {
         "model": ConstantNormalModel(),
         "importance_morph": StandardNormalProposal(),
-        "proposal_scheme": "rwalk",
-        "rwalk_settings": RWalkSettings(walks=4),
+        "proposal_scheme": "s-rwalk",
+        "srwalk_settings": SRWalkSettings(n_steps=4, dynamic_steps=False),
         "n_live": 10,
         "rng": 144,
         "tie_policy": "randomized_plateau",
@@ -230,8 +228,8 @@ def test_parallel_call_reservations_never_overshoot_hard_limit() -> None:
     result = NISMOSampler(
         model=ConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
-        proposal_scheme="rwalk",
-        rwalk_settings=RWalkSettings(walks=4),
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(n_steps=4, dynamic_steps=False),
         n_live=10,
         rng=89,
         tie_policy="randomized_plateau",
@@ -253,8 +251,8 @@ def test_parallel_deadline_discards_prefetch_without_committing_late_result() ->
     result = NISMOSampler(
         model=DelayedConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
-        proposal_scheme="rwalk",
-        rwalk_settings=RWalkSettings(walks=4),
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(n_steps=4, dynamic_steps=False),
         n_live=10,
         rng=90,
         tie_policy="randomized_plateau",
