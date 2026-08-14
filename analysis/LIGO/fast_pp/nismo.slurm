@@ -11,7 +11,11 @@ set -euo pipefail
 
 # This job only reads dynesty_result.json.  It does not resume Dynesty and
 # never reads dynesty_resume.pickle or dynesty_dynesty.pickle.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# OzSTAR's sbatch stages this script into a per-job /jobfs directory before
+# running it, so BASH_SOURCE no longer points at the real repo. Resolve
+# SCRIPT_DIR from SLURM_SUBMIT_DIR (the directory `sbatch` was invoked from)
+# instead.
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is unset; submit with sbatch from analysis/LIGO/fast_pp}"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # OzSTAR runtime: load the requested toolchain and reuse the repository venv.
