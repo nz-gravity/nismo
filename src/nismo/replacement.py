@@ -135,6 +135,7 @@ class ReplacementJob:
     deadline: float | None
     rwalk_scale: float | None = None
     srwalk_scale: float | None = None
+    srwalk_steps: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,9 +366,12 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
         srwalk_controller = SRWalkSampler(
             settings=config.srwalk_settings,
             ndim=job.model.ndim,
+            step_limit=config.max_proposals_per_replacement,
         )
         if job.srwalk_scale is not None:
             srwalk_controller.scale = job.srwalk_scale
+        if job.srwalk_steps is not None:
+            srwalk_controller.n_steps = job.srwalk_steps
         proposal_scale = srwalk_controller.scale
         attempt = draw_srwalk_constrained(
             evaluator=evaluator,

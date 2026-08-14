@@ -166,6 +166,16 @@ def test_removed_rwalk_settings_are_not_accepted(kwargs: dict[str, Any]) -> None
         {"scale": True},
         {"facc": True},
         {"facc": np.nan},
+        {"dynamic_steps": 1},
+        {"max_steps": 0},
+        {"n_steps": 10, "max_steps": 9},
+        {"target_zero_move_probability": 0.0},
+        {"target_zero_move_probability": 1.0},
+        {"acceptance_window": 0},
+        {"max_step_growth": 0.5},
+        {"zero_accept_scale_factor": 0.0},
+        {"zero_accept_scale_factor": 1.1},
+        {"zero_move_policy": "retry"},
         {"covariance_shrinkage": -0.1},
         {"covariance_shrinkage": 1.1},
         {"covariance_jitter": 0.0},
@@ -192,7 +202,8 @@ def test_srwalk_sampler_uses_gaussian_default_and_rwalk_adaptation() -> None:
     sampler.record_completed_walk(accept=4, scale=initial_scale)
     assert sampler.scale == pytest.approx(initial_scale * np.exp(0.5))
     sampler.record_completed_walk(accept=0, scale=sampler.scale)
-    assert sampler.scale == pytest.approx(initial_scale)
+    assert sampler.scale == pytest.approx(0.5 * initial_scale)
+    assert sampler.n_steps == 8
 
     explicit = SRWalkSampler(
         settings=SRWalkSettings(n_steps=5, scale=0.25, facc=0.2),
@@ -200,6 +211,41 @@ def test_srwalk_sampler_uses_gaussian_default_and_rwalk_adaptation() -> None:
     )
     assert explicit.scale == 0.25
     assert explicit.facc == 0.2
+
+
+def test_srwalk_dynamic_length_responds_to_zero_acceptance_and_recovers() -> None:
+    sampler = SRWalkSampler(
+        settings=SRWalkSettings(
+            n_steps=10,
+            scale=1.0,
+            max_steps=100,
+            target_zero_move_probability=1.0e-2,
+            acceptance_window=1,
+            max_step_growth=2.0,
+        ),
+        ndim=2,
+    )
+
+    sampler.record_completed_walk(accept=0, scale=sampler.scale, n_steps=10)
+    assert sampler.n_steps == 20
+    assert sampler.predicted_zero_move_probability == 1.0
+
+    sampler.record_completed_walk(accept=4, scale=sampler.scale, n_steps=20)
+    assert sampler.estimated_acceptance == pytest.approx(0.2)
+    assert sampler.n_steps == 21
+    assert sampler.predicted_zero_move_probability <= 1.0e-2
+
+    sampler.record_completed_walk(accept=21, scale=sampler.scale, n_steps=21)
+    assert sampler.n_steps == 10
+
+
+def test_srwalk_can_disable_dynamic_length() -> None:
+    sampler = SRWalkSampler(
+        settings=SRWalkSettings(n_steps=10, dynamic_steps=False),
+        ndim=2,
+    )
+    sampler.record_completed_walk(accept=0, scale=sampler.scale)
+    assert sampler.n_steps == 10
 
 
 def test_rwalk_sampler_resolves_dynesty_defaults_and_clamps_controls() -> None:
@@ -833,7 +879,44 @@ def test_srwalk_uses_frozen_survivor_covariance_and_can_stay_put(
     assert attempt.n_accepted == 0
     assert attempt.n_moved == 0
     assert attempt.n_completed == 7
-    assert sampler.scale == pytest.approx(np.exp(-1.0))
+    assert sampler.scale == pytest.approx(0.5 * np.exp(-1.0))
+    assert sampler.n_steps == 14
+
+
+def test_srwalk_zero_move_policy_can_stop_without_returning_a_duplicate() -> None:
+    evaluator, theta, log_likelihood, log_prior, log_q0, log_psi0, ties = (
+        _all_rejected_problem()
+    )
+    sampler = SRWalkSampler(
+        settings=SRWalkSettings(
+            n_steps=4,
+            scale=1.0,
+            zero_move_policy="stop",
+        ),
+        ndim=1,
+    )
+    attempt = draw_srwalk_constrained(
+        evaluator=evaluator,
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=log_prior,
+        live_log_q0=log_q0,
+        live_log_psi0=log_psi0,
+        live_tie_breakers=ties,
+        worst=0,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        sampler=sampler,
+        rng=np.random.default_rng(47),
+        max_proposals=4,
+        max_likelihood_calls=None,
+        deadline=None,
+    )
+    assert attempt.draw is None
+    assert attempt.reason == "srwalk_stalled"
+    assert attempt.n_completed == 4
+    assert sampler.n_steps == 8
 
 
 def test_srwalk_batches_gaussian_increment_linear_algebra(

@@ -620,7 +620,11 @@ class NISMOSampler:
             else None
         )
         srwalk_sampler = (
-            SRWalkSampler(settings=config.srwalk_settings, ndim=self.model.ndim)
+            SRWalkSampler(
+                settings=config.srwalk_settings,
+                ndim=self.model.ndim,
+                step_limit=config.max_proposals_per_replacement,
+            )
             if config.proposal_scheme in ("s-rwalk", "mor-rwalk")
             else None
         )
@@ -801,10 +805,8 @@ class NISMOSampler:
                 return
             srwalk_attempt_factorization_seconds += attempt.srwalk_factorization_seconds
             srwalk_proposal_seconds += attempt.srwalk_proposal_seconds
-            if (
-                attempt.draw is not None
-                and srwalk_sampler is not None
-                and attempt.n_completed == srwalk_sampler.n_steps
+            if attempt.n_completed > 0 and (
+                attempt.draw is not None or attempt.reason == "srwalk_stalled"
             ):
                 srwalk_completed_walks += 1
                 srwalk_total_squared_displacement += attempt.srwalk_squared_displacement
@@ -819,23 +821,30 @@ class NISMOSampler:
             if not epoch_results:
                 return
             if rwalk_sampler is not None:
-                completed = tuple(
+                completed_rwalk = tuple(
                     (result.attempt.n_accepted, float(result.proposal_scale))
                     for result in epoch_results
                     if result.attempt.draw is not None
                     and result.attempt.n_completed == rwalk_sampler.walks
                     and result.proposal_scale is not None
                 )
-                rwalk_sampler.record_completed_epoch(completed)
+                rwalk_sampler.record_completed_epoch(completed_rwalk)
             if srwalk_sampler is not None:
-                completed = tuple(
-                    (result.attempt.n_accepted, float(result.proposal_scale))
+                completed_srwalk = tuple(
+                    (
+                        result.attempt.n_accepted,
+                        float(result.proposal_scale),
+                        result.attempt.n_completed,
+                    )
                     for result in epoch_results
-                    if result.attempt.draw is not None
-                    and result.attempt.n_completed == srwalk_sampler.n_steps
+                    if result.attempt.n_completed == srwalk_sampler.n_steps
+                    and (
+                        result.attempt.draw is not None
+                        or result.attempt.reason == "srwalk_stalled"
+                    )
                     and result.proposal_scale is not None
                 )
-                srwalk_sampler.record_completed_epoch(completed)
+                srwalk_sampler.record_completed_epoch(completed_srwalk)
             epoch_results = []
 
         def refill_queue(
@@ -932,6 +941,9 @@ class NISMOSampler:
                         ),
                         srwalk_scale=(
                             None if srwalk_sampler is None else srwalk_sampler.scale
+                        ),
+                        srwalk_steps=(
+                            None if srwalk_sampler is None else srwalk_sampler.n_steps
                         ),
                     )
                 )

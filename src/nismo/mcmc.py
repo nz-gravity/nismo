@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import time
 import warnings
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -128,7 +129,14 @@ class RWalkSampler:
 class SRWalkSampler:
     """Adaptive controller for the Gaussian-covariance ``s-rwalk`` kernel."""
 
-    def __init__(self, *, settings: SRWalkSettings, ndim: int) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SRWalkSettings,
+        ndim: int,
+        step_limit: int | None = None,
+    ) -> None:
+        self.base_n_steps = settings.n_steps
         self.n_steps = settings.n_steps
         self.facc = min(1.0, max(1.0 / self.n_steps, settings.facc))
         self.ndim = ndim
@@ -137,7 +145,64 @@ class SRWalkSampler:
         )
         self.covariance_shrinkage = settings.covariance_shrinkage
         self.covariance_jitter = settings.covariance_jitter
+        self.dynamic_steps = settings.dynamic_steps
+        self.max_steps = min(
+            settings.max_steps,
+            settings.max_steps if step_limit is None else max(self.n_steps, step_limit),
+        )
+        self.target_zero_move_probability = settings.target_zero_move_probability
+        self.max_step_growth = settings.max_step_growth
+        self.zero_accept_scale_factor = settings.zero_accept_scale_factor
+        self.zero_move_policy = settings.zero_move_policy
+        self._acceptance_history: deque[tuple[int, int]] = deque(
+            maxlen=settings.acceptance_window
+        )
         self.srwalk_history = {"n_accept": 0, "n_reject": 0}
+
+    @property
+    def estimated_acceptance(self) -> float:
+        """Return the proposal acceptance observed in the recent walk window."""
+        proposed = sum(n_proposed for _, n_proposed in self._acceptance_history)
+        if not proposed:
+            return self.facc
+        return sum(n_accept for n_accept, _ in self._acceptance_history) / proposed
+
+    @property
+    def predicted_zero_move_probability(self) -> float:
+        """Approximate the chance that the next fixed-length walk never moves."""
+        acceptance = self.estimated_acceptance
+        if acceptance <= 0.0:
+            return 1.0
+        if acceptance >= 1.0:
+            return 0.0
+        return float(math.exp(self.n_steps * math.log1p(-acceptance)))
+
+    def _update_n_steps(self, *, epoch_accept: int) -> None:
+        if not self.dynamic_steps:
+            self.n_steps = self.base_n_steps
+            return
+        if epoch_accept == 0:
+            desired = math.ceil(self.n_steps * self.max_step_growth)
+        else:
+            acceptance = self.estimated_acceptance
+            if acceptance <= 0.0:
+                desired = self.max_steps
+            elif acceptance >= 1.0:
+                desired = self.base_n_steps
+            else:
+                desired = math.ceil(
+                    math.log(self.target_zero_move_probability)
+                    / math.log1p(-acceptance)
+                )
+        growth_limit = max(
+            self.n_steps,
+            math.ceil(self.n_steps * self.max_step_growth),
+        )
+        self.n_steps = min(
+            self.max_steps,
+            growth_limit,
+            max(self.base_n_steps, desired),
+        )
 
     def tune(
         self,
@@ -159,25 +224,47 @@ class SRWalkSampler:
         self.srwalk_history["n_accept"] = 0
         self.srwalk_history["n_reject"] = 0
 
-    def record_completed_walk(self, *, accept: int, scale: float) -> None:
+    def record_completed_walk(
+        self,
+        *,
+        accept: int,
+        scale: float,
+        n_steps: int | None = None,
+    ) -> None:
         """Tune the scale after one complete fixed-geometry chain."""
-        self.record_completed_epoch(((accept, scale),))
+        completed_steps = self.n_steps if n_steps is None else n_steps
+        self.record_completed_epoch(((accept, scale, completed_steps),))
 
     def record_completed_epoch(
         self,
-        walks: Iterable[tuple[int, float]],
+        walks: Iterable[tuple[int, float] | tuple[int, float, int]],
     ) -> None:
-        """Aggregate walks constructed under one scale, then tune once."""
+        """Tune once after a frozen serial walk or parallel queue epoch."""
         completed = tuple(walks)
-        for index, (accept, scale) in enumerate(completed):
+        normalized: list[tuple[int, float, int]] = []
+        for walk in completed:
+            if len(walk) == 2:
+                accept, scale = walk
+                walk_steps = self.n_steps
+            else:
+                accept, scale, walk_steps = walk
+            normalized.append((accept, scale, walk_steps))
+        for index, (accept, scale, walk_steps) in enumerate(normalized):
             self.tune(
                 {
                     "accept": accept,
-                    "reject": self.n_steps - accept,
+                    "reject": walk_steps - accept,
                     "scale": scale,
                 },
-                update=index == len(completed) - 1,
+                update=index == len(normalized) - 1,
             )
+            self._acceptance_history.append((accept, walk_steps))
+        if not normalized:
+            return
+        epoch_accept = sum(accept for accept, _, _ in normalized)
+        if epoch_accept == 0:
+            self.scale *= self.zero_accept_scale_factor
+        self._update_n_steps(epoch_accept=epoch_accept)
 
 
 def _improve_covariance(
@@ -843,9 +930,10 @@ def draw_srwalk_constrained(
         live_log_psi0=live_log_psi0,
         live_tie_breakers=live_tie_breakers,
     )
+    walk_steps = sampler.n_steps
     failure = _preflight_failure(
         evaluator=evaluator,
-        required_proposals=sampler.n_steps,
+        required_proposals=walk_steps,
         max_proposals=max_proposals,
         # Prior-first evaluation makes this an upper bound rather than an
         # exact likelihood-call requirement. The loop enforces the hard limit.
@@ -897,7 +985,7 @@ def draw_srwalk_constrained(
     )
     scale = sampler.scale
     proposal_start = time.perf_counter() if evaluator.profile else 0.0
-    standard_normals = rng.standard_normal(size=(sampler.n_steps, evaluator.ndim))
+    standard_normals = rng.standard_normal(size=(walk_steps, evaluator.ndim))
     increments = scale * (standard_normals @ factor.T)
     proposal_seconds = (
         time.perf_counter() - proposal_start if evaluator.profile else 0.0
@@ -994,7 +1082,24 @@ def draw_srwalk_constrained(
         tie_breaker=current_tie_breaker,
     )
     draw = ConstrainedDraw(current, n_proposed, n_valid)
-    sampler.record_completed_walk(accept=n_accepted, scale=scale)
+    sampler.record_completed_walk(
+        accept=n_accepted,
+        scale=scale,
+        n_steps=walk_steps,
+    )
+    if not moved and sampler.zero_move_policy == "stop":
+        return ConstrainedAttempt(
+            None,
+            "srwalk_stalled",
+            n_proposed,
+            n_valid,
+            n_accepted,
+            0,
+            walk_steps,
+            srwalk_factorization_seconds=factorization_seconds,
+            srwalk_proposal_seconds=proposal_seconds,
+            srwalk_squared_displacement=0.0,
+        )
     return ConstrainedAttempt(
         draw,
         None,
@@ -1002,7 +1107,7 @@ def draw_srwalk_constrained(
         n_valid,
         n_accepted,
         int(moved),
-        sampler.n_steps,
+        walk_steps,
         srwalk_factorization_seconds=factorization_seconds,
         srwalk_proposal_seconds=proposal_seconds,
         srwalk_squared_displacement=float(
