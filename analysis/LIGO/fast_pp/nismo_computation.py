@@ -192,6 +192,7 @@ def run_nismo(
     dlogz: float,
     seed: int,
     morph_type: str,
+    proposal_scheme: str,
     max_iterations: int | None,
     progress: bool,
 ) -> tuple[Any, Any]:
@@ -207,7 +208,7 @@ def run_nismo(
     sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
-        proposal_scheme="en-rwalk",
+        proposal_scheme=proposal_scheme,
         n_live=n_live,
         rng=seed,
         parallel=ParallelSettings(n_workers=4, queue_size=4),
@@ -230,6 +231,7 @@ def result_payload(
     seed: int,
     n_live: int,
     dlogz: float,
+    proposal_scheme: str,
     max_iterations: int | None,
     runtime_seconds: float,
 ) -> dict[str, Any]:
@@ -242,7 +244,7 @@ def result_payload(
         "dlogz": dlogz,
         "max_iterations": max_iterations,
         "seed": seed,
-        "proposal_scheme": "en-rwalk",
+        "proposal_scheme": proposal_scheme,
         "parallel": {"n_workers": 4, "queue_size": 4},
         "morph_metadata": {
             "selected_groups": [
@@ -285,6 +287,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20260811)
     parser.add_argument("--morph-type", default="2_group")
+    parser.add_argument(
+        "--proposal-scheme",
+        choices=("rwalk", "s-rwalk", "en-rwalk"),
+        default="en-rwalk",
+        help="NISMO constrained replacement kernel; use s-rwalk for the s-walk variant",
+    )
     parser.add_argument("--audit-points", type=int, default=32)
     parser.add_argument(
         "--progress",
@@ -383,6 +391,7 @@ def main() -> None:
         dlogz=args.dlogz,
         seed=args.seed,
         morph_type=args.morph_type,
+        proposal_scheme=args.proposal_scheme,
         max_iterations=max_iterations,
         progress=args.progress,
     )
@@ -398,6 +407,7 @@ def main() -> None:
         seed=args.seed,
         n_live=args.n_live,
         dlogz=args.dlogz,
+        proposal_scheme=args.proposal_scheme,
         max_iterations=max_iterations,
         runtime_seconds=nismo_runtime_seconds,
     )

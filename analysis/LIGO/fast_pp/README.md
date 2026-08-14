@@ -1,5 +1,20 @@
 # PP test
 
+## Setup
+
+From the repository root, create the uv environment for this LVK analysis:
+
+```bash
+uv sync --group lvk
+```
+
+If you are also modifying NISMO itself, use the development environment plus
+the LVK group:
+
+```bash
+uv sync --extra dev --group lvk
+```
+
 
 
 ```csv
@@ -43,3 +58,37 @@ checks the residual variation; NISMO always uses the full likelihood.
 
 For an array run, submit `nismo.slurm`. Set `MORPHZ_VENV` if the existing
 Bilby/MorphZ environment is not `/morphZ_casestudy_CBC_pe/.venv`.
+
+## Low-live-point training-posterior check
+
+To test whether NISMO remains accurate when its Morph proposal is trained on a
+smaller Dynesty posterior, keep the low-live-point Dynesty result isolated from
+the production result:
+
+```bash
+SLURM_CPUS_PER_TASK=4 uv run --extra morph --extra ligo \
+  python analysis/LIGO/fast_pp/pp_analysis.py \
+  --index 48 --sampler dynesty --nlive 500 \
+  --output-dir analysis/LIGO/fast_pp/outdir/seed_48/dynesty_nlive500 \
+  --label dynesty_nlive500 --no-corner
+```
+
+If an interrupted run has its `dynesty_nlive500_resume.pickle` checkpoint,
+repeat the same command with `--resume` to continue it.
+
+Then run NISMO with the production live count, using only that new posterior as
+its proposal-training input:
+
+```bash
+uv run --extra morph --extra ligo \
+  python analysis/LIGO/fast_pp/nismo_computation.py 48 \
+  --result-path analysis/LIGO/fast_pp/outdir/seed_48/dynesty_nlive500/dynesty_nlive500_result.json \
+  --output-dir analysis/LIGO/fast_pp/outdir/seed_48/nismo_from_dynesty_nlive500 \
+  --n-live 2000 --progress
+```
+
+The relevant comparison is against the stored Dynesty-2000 evidence. Agreement
+is possible only if the Dynesty-500 posterior includes all material modes and
+gives Morph enough support in every evidence-relevant region. Repeat the paired
+experiment with independent sampler random seeds before treating one agreement
+as calibration evidence.

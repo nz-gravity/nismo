@@ -247,6 +247,13 @@ cd nismo
 uv sync --extra dev
 ```
 
+If you also want the LVK analysis workflow under
+`analysis/LIGO/fast_pp`, install its dedicated uv group as well:
+
+```bash
+uv sync --extra dev --group lvk
+```
+
 Run the development checks and build the package:
 
 ```bash
