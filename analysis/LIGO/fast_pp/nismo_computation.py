@@ -9,8 +9,6 @@ Run from any directory, for example from the NISMO repository root::
 
     uv run python analysis/LIGO/fast_pp/nismo_computation.py 48
 
-``--result-path`` and ``--output-dir`` are useful when the result files are
-staged elsewhere on a cluster.
 """
 
 from __future__ import annotations
@@ -27,8 +25,15 @@ from typing import Any
 
 import numpy as np
 
-NISMO_PROPOSAL_SCHEME = "s-rwalk"
 from nismo import MorphProposal, NISMOSampler, ParallelSettings
+
+NISMO_PROPOSAL_SCHEME = "s-rwalk"
+NISMO_N_LIVE = 2000
+NISMO_DLOGZ = 0.1
+NISMO_MORPH_TYPE = "2_group"
+NISMO_DEFAULT_SEED = 20260811
+POSTERIOR_AUDIT_POINTS = 32
+POSTERIOR_AUDIT_TOLERANCE = 1.0e-6
 
 
 parallel_settings = ParallelSettings(n_workers=4, queue_size=4)
@@ -207,7 +212,7 @@ def run_nismo(
     seed: int,
     morph_type: str,
     max_iterations: int | None,
-    progress: bool,
+    progress: bool = True,
 ) -> tuple[Any, Any]:
     """Fit one fixed Morph proposal and run a fresh NISMO calculation."""
 
@@ -284,40 +289,16 @@ def result_payload(
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("index", type=int, help="row in injections.csv")
-    parser.add_argument("--result-path", type=Path)
-    parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--n-live", type=int, default=500)
-    parser.add_argument("--dlogz", type=float, default=0.1)
+    parser.add_argument("lvk_seed", type=int, help="row in injections.csv")
     parser.add_argument(
-        "--max-iterations",
+        "--nismo-seed",
         type=int,
-        help="hard cap; defaults to max(10000, 25 * n_live)",
+        default=NISMO_DEFAULT_SEED,
+        help="random seed for this NISMO replica",
     )
-    parser.add_argument("--seed", type=int, default=20260811)
-    parser.add_argument("--morph-type", default="silverman")
-    parser.add_argument("--audit-points", type=int, default=32)
-    parser.add_argument(
-        "--progress",
-        action="store_true",
-        help="show NISMO's live terminal progress display",
-    )
-    parser.add_argument(
-        "--audit-tolerance",
-        type=float,
-        default=1.0e-6,
-        help="maximum allowed absolute reconstructed log-density discrepancy",
-    )
-    parser.add_argument(
-        "--recompute-morphz",
-        dest="skip_morphz",
-        action="store_false",
-        default=True,
-        help="also recompute MorphZ instead of using the existing result",
-    )
-    return parser.parse_args()
+    return parser.parse_args(arguments)
 
 
 def main() -> None:
@@ -325,22 +306,21 @@ def main() -> None:
     from bilby.core.result import read_in_result
     from pp_setup import load_simulation
 
-    default_result = (
-        Path(__file__).resolve().parent
-        / "outdir"
-        / f"seed_{args.index}"
-        / "dynesty_result.json"
-    )
-    result_path = (args.result_path or default_result).resolve()
-    output_dir = (args.output_dir or result_path.parent).resolve()
+    result_root = Path(__file__).resolve().parent / "outdir"
+    result_path = (
+        result_root / f"seed_{args.lvk_seed}" / "dynesty_result.json"
+    ).resolve()
+    output_dir = (
+        result_root / f"seed_{args.lvk_seed}" / f"nismo_swalk_seed_{args.nismo_seed}"
+    ).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     if not result_path.is_file():
         raise FileNotFoundError(result_path)
 
     dynesty_result = read_in_result(filename=str(result_path))
     likelihood, priors, _, _, _ = load_simulation(
-        args.index,
-        output_root=output_dir.parent,
+        args.lvk_seed,
+        output_root=result_root,
         plot_data=False,
     )
     names = posterior_parameter_names(dynesty_result)
@@ -355,49 +335,32 @@ def main() -> None:
         model=model,
         result=dynesty_result,
         samples=samples,
-        n_points=args.audit_points,
+        n_points=POSTERIOR_AUDIT_POINTS,
     )
     print("Posterior reconstruction audit:", json.dumps(audit, indent=2))
     max_audit_difference = max(
         audit["max_abs_log_prior_difference"],
         audit["max_abs_log_likelihood_residual"],
     )
-    if max_audit_difference > args.audit_tolerance:
+    if max_audit_difference > POSTERIOR_AUDIT_TOLERANCE:
         raise RuntimeError(
             "reconstructed Bilby model disagrees with the Dynesty result: "
             f"maximum discrepancy {max_audit_difference:.3e} exceeds "
-            f"--audit-tolerance={args.audit_tolerance:.3e}"
+            f"the fixed tolerance {POSTERIOR_AUDIT_TOLERANCE:.3e}"
         )
-    morphz = load_existing_morphz(result_path, args.index)
-    if not args.skip_morphz:
-        # Keep MorphZ as an independently reported post-processing comparator.
-        # Its legacy routine also recomputes the Bilby likelihood at the
-        # posterior points it uses.
-        from morphz_computation import get_morphz_evidence
-
-        morphz = get_morphz_evidence(
-            dynesty_result,
-            priors,
-            likelihood,
-            label=f"seed_{args.index}_dynesty",
-            output_dir=output_dir,
-        )
-    max_iterations = (
-        args.max_iterations
-        if args.max_iterations is not None
-        else default_max_iterations(args.n_live)
-    )
+    morphz = load_existing_morphz(result_path, args.lvk_seed)
+    max_iterations = default_max_iterations(NISMO_N_LIVE)
     nismo_start = time.perf_counter()
     nismo_result, proposal = run_nismo(
         model=model,
         samples=samples,
         names=names,
-        n_live=args.n_live,
-        dlogz=args.dlogz,
-        seed=args.seed,
-        morph_type=args.morph_type,
+        n_live=NISMO_N_LIVE,
+        dlogz=NISMO_DLOGZ,
+        seed=args.nismo_seed,
+        morph_type=NISMO_MORPH_TYPE,
         max_iterations=max_iterations,
-        progress=args.progress,
+        progress=True,
     )
     nismo_runtime_seconds = time.perf_counter() - nismo_start
     payload = result_payload(
@@ -408,9 +371,9 @@ def main() -> None:
         names=names,
         audit=audit,
         morphz=morphz,
-        seed=args.seed,
-        n_live=args.n_live,
-        dlogz=args.dlogz,
+        seed=args.nismo_seed,
+        n_live=NISMO_N_LIVE,
+        dlogz=NISMO_DLOGZ,
         max_iterations=max_iterations,
         runtime_seconds=nismo_runtime_seconds,
     )
