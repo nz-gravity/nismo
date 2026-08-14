@@ -15,8 +15,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # OzSTAR runtime: load the requested toolchain and reuse the repository venv.
-# The Dynesty-2000 result for each seed is read from outdir/seed_<index>/
-# unless RESULT_ROOT is overridden at submit time.
+# The Dynesty-2000 result for each seed is read from outdir/seed_<index>/.
 module purge
 module load gcc/13.3.0 python/3.12.3
 
@@ -24,15 +23,8 @@ MORPHZ_VENV="${MORPHZ_VENV:-/fred/oz200/avajpeyi/projects/MORPH/nismo/.venv}"
 source "${MORPHZ_VENV}/bin/activate"
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-RESULT_ROOT="${RESULT_ROOT:-${SCRIPT_DIR}/outdir}"
-RESULT_PATH="${RESULT_ROOT}/seed_${SLURM_ARRAY_TASK_ID}/dynesty_result.json"
-
-if [[ ! -f "${RESULT_PATH}" ]]; then
-	echo "Missing Dynesty result: ${RESULT_PATH}" >&2
-	exit 1
-fi
+NISMO_SEED="${NISMO_SEED:-20260811}"
 
 srun python "${SCRIPT_DIR}/nismo_computation.py" \
 	"${SLURM_ARRAY_TASK_ID}" \
-	--result-path "${RESULT_PATH}" \
-	--output-dir "${RESULT_ROOT}/seed_${SLURM_ARRAY_TASK_ID}"
+	--nismo-seed "${NISMO_SEED}"

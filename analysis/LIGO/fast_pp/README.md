@@ -22,32 +22,26 @@ seed, lnZ_dynesty, lnZ_dynesty_err, lnZ_mcmc, lnZ_mcmc_err, lnZ_morph_dynesty, l
 
 ## Dynesty / MorphZ / NISMO comparison
 
-`nismo_computation.py` reads one completed `dynesty_result.json` and runs a
-fresh NISMO calculation. NISMO fits its proposal from every stored Dynesty
-posterior row; it does not reuse Dynesty's sampler state or checkpoint files.
-The existing MorphZ results remain the comparator by default. Add
-`--recompute-morphz` only when a fresh MorphZ calculation is required.
-When no explicit `--max-iterations` is supplied, the runner uses
-`max(10000, 25 * n_live)` so larger live sets are not truncated by NISMO's
-fixed library default.
+`nismo_computation.py` reads
+`outdir/seed_<LVK seed>/dynesty_result.json` and runs a fresh fixed-settings
+NISMO calculation. NISMO fits its proposal from every stored Dynesty posterior
+row; it does not reuse Dynesty's sampler state or checkpoint files. The only
+run-time choices are the LVK seed and, optionally, the NISMO replica seed.
 
 ```bash
 python nismo_computation.py 48
 ```
 
-The command can run from another directory when both paths are explicit:
+To make an independent NISMO replica, use:
 
 ```bash
-python /path/to/nismo/analysis/LIGO/fast_pp/nismo_computation.py 48 \
-  --result-path /scratch/results/seed_48/dynesty_result.json \
-  --output-dir /scratch/results/seed_48
+python nismo_computation.py 48 --nismo-seed 47
 ```
 
-It writes `nismo_dynesty_comparison.json` beside the result. This includes the
-Dynesty, MorphZ, and NISMO log evidences, NISMO termination state and call
-counts, Morph metadata, and a reconstructed-prior/likelihood audit. The audit
-must pass before NISMO starts; use `--audit-tolerance` only to accommodate a
-verified, small cross-version numerical difference.
+It writes to `outdir/seed_<LVK seed>/nismo_swalk_seed_<NISMO seed>/`. This
+includes the Dynesty, MorphZ, and NISMO log evidences, NISMO termination state
+and call counts, Morph metadata, and a reconstructed-prior/likelihood audit.
+The audit must pass before NISMO starts.
 
 Some legacy Bilby result files store `posterior.log_likelihood` as a likelihood
 ratio while their `log_evidence` and fresh likelihood evaluations use the full
@@ -61,8 +55,8 @@ For an array run on OzSTAR, submit `nismo.slurm`. The script loads
 
 By default it reads the existing Dynesty-2000 result for each seed from
 `analysis/LIGO/fast_pp/outdir/seed_<index>/dynesty_result.json` and writes the
-NISMO comparison JSON back into that same seed directory. Override
-`RESULT_ROOT` at submit time when the OzSTAR results live elsewhere.
+NISMO comparison JSON to a separate directory for each NISMO seed:
+`outdir/seed_<index>/nismo_swalk_seed_<NISMO seed>/`.
 
 ## Low-live-point training-posterior check
 
@@ -81,19 +75,6 @@ SLURM_CPUS_PER_TASK=4 uv run --extra lvk \
 If an interrupted run has its `dynesty_nlive500_resume.pickle` checkpoint,
 repeat the same command with `--resume` to continue it.
 
-Then run NISMO with the production live count, using only that new posterior as
-its proposal-training input:
-
-```bash
-uv run --extra lvk \
-  python analysis/LIGO/fast_pp/nismo_computation.py 48 \
-  --result-path analysis/LIGO/fast_pp/outdir/seed_48/dynesty_nlive500/dynesty_nlive500_result.json \
-  --output-dir analysis/LIGO/fast_pp/outdir/seed_48/nismo_from_dynesty_nlive500 \
-  --n-live 2000 --progress
-```
-
-The relevant comparison is against the stored Dynesty-2000 evidence. Agreement
-is possible only if the Dynesty-500 posterior includes all material modes and
-gives Morph enough support in every evidence-relevant region. Repeat the paired
-experiment with independent sampler random seeds before treating one agreement
-as calibration evidence.
+This fixed campaign runner deliberately does not support that alternate input
+path. Keep it as a separate experiment rather than mixing it into the
+production all-seed comparison.

@@ -83,6 +83,15 @@ def test_ligo_runner_is_fixed_to_srwalk() -> None:
     assert RUNNER.NISMO_PROPOSAL_SCHEME == "s-rwalk"
 
 
+def test_ligo_runner_cli_only_selects_lvk_and_nismo_seeds() -> None:
+    defaults = RUNNER.parse_args(["48"])
+    replica = RUNNER.parse_args(["48", "--nismo-seed", "47"])
+
+    assert defaults.lvk_seed == 48
+    assert defaults.nismo_seed == RUNNER.NISMO_DEFAULT_SEED
+    assert replica.nismo_seed == 47
+
+
 class _NaNPrior:
     def ln_prob(self, parameters: dict[str, float]) -> float:
         return np.nan if parameters["x"] < 0.0 else -0.5 * parameters["x"] ** 2
