@@ -15,8 +15,6 @@ the LVK group:
 uv sync --extra dev --group lvk
 ```
 
-
-
 ```csv
 seed, lnZ_dynesty, lnZ_dynesty_err, lnZ_mcmc, lnZ_mcmc_err, lnZ_morph_dynesty, lnZ_morph_dynesty_err, lnZ_morph_mcmc, lnZ_morph_mcmc_err
 ...
@@ -56,8 +54,15 @@ ratio while their `log_evidence` and fresh likelihood evaluations use the full
 normalization. The audit records that constant as `log_likelihood_offset` and
 checks the residual variation; NISMO always uses the full likelihood.
 
-For an array run, submit `nismo.slurm`. Set `MORPHZ_VENV` if the existing
-Bilby/MorphZ environment is not `/morphZ_casestudy_CBC_pe/.venv`.
+For an array run on OzSTAR, submit `nismo.slurm`. The script loads
+`gcc/13.3.0` and `python/3.12.3`, defaults `MORPHZ_VENV` to
+`/fred/oz200/avajpeyi/projects/MORPH/nismo/.venv`, and runs array indices
+`0-99` to match `injections.csv`.
+
+By default it reads the existing Dynesty-2000 result for each seed from
+`analysis/LIGO/fast_pp/outdir/seed_<index>/dynesty_result.json` and writes the
+NISMO comparison JSON back into that same seed directory. Override
+`RESULT_ROOT` at submit time when the OzSTAR results live elsewhere.
 
 ## Low-live-point training-posterior check
 
