@@ -5,7 +5,7 @@ import time
 import numpy as np
 import pytest
 from numpy.typing import NDArray
-from tests.helpers import StandardNormalProposal
+from tests.helpers import StandardNormalProposal, UniformProposal
 
 from nismo import (
     ConfigurationError,
@@ -44,6 +44,14 @@ class DelayedConstantNormalModel(ConstantNormalModel):
     ) -> NDArray[np.float64]:
         time.sleep(0.002 * len(theta))
         return super().log_likelihood(theta)
+
+
+class ConstantUniformModel(ConstantNormalModel):
+    def log_prior(
+        self,
+        theta: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        return UniformProposal().log_prob(theta)
 
 
 @pytest.mark.parametrize(
@@ -154,6 +162,34 @@ def test_mor_rwalk_switches_to_parallel_srwalk_queue() -> None:
     diagnostics = result.queue_diagnostics
     assert diagnostics.queue_candidates_consumed == result.niter - 1
     assert result.n_likelihood_calls == 11 + diagnostics.prefetch_likelihood_calls
+
+
+def test_parallel_srwalk_freezes_then_propagates_dynamic_epoch_length() -> None:
+    result = NISMOSampler(
+        model=ConstantUniformModel(),
+        importance_morph=UniformProposal(),
+        proposal_scheme="s-rwalk",
+        srwalk_settings=SRWalkSettings(
+            n_steps=4,
+            scale=1.0e12,
+            max_steps=8,
+            max_step_growth=2.0,
+        ),
+        n_live=10,
+        rng=193,
+        tie_policy="randomized_plateau",
+        n_workers=2,
+        queue_size=2,
+    ).run(
+        dlogz=1.0e-6,
+        max_iterations=3,
+        max_proposals_per_replacement=8,
+    )
+
+    assert result.termination_reason == "max_iterations"
+    np.testing.assert_array_equal(result.history.mcmc_completed, [4, 8, 8])
+    np.testing.assert_array_equal(result.history.mcmc_accepted, [0, 0, 0])
+    np.testing.assert_array_equal(result.history.mcmc_moved, [0, 0, 0])
 
 
 def test_explicit_singleton_queue_preserves_default_serial_stream() -> None:
