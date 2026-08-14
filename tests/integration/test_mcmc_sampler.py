@@ -6,11 +6,11 @@ from tests.helpers import StandardNormalProposal, UniformProposal
 
 from nismo import (
     CallableModel,
+    ConfigurationError,
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
     MORWalkSettings,
     NISMOSampler,
-    RWalkSettings,
     SRWalkSettings,
 )
 
@@ -31,7 +31,6 @@ def _constant_problem() -> tuple[CallableModel, StandardNormalProposal]:
 @pytest.mark.parametrize(
     ("proposal_scheme", "settings"),
     [
-        ("rwalk", RWalkSettings(walks=4)),
         ("s-rwalk", SRWalkSettings(n_steps=4, dynamic_steps=False)),
         (
             "en-rwalk",
@@ -41,12 +40,10 @@ def _constant_problem() -> tuple[CallableModel, StandardNormalProposal]:
 )
 def test_mcmc_samplers_are_reproducible_and_report_separate_diagnostics(
     proposal_scheme: str,
-    settings: RWalkSettings | SRWalkSettings | EnsembleRWalkSettings,
+    settings: SRWalkSettings | EnsembleRWalkSettings,
 ) -> None:
     model, proposal = _constant_problem()
-    if isinstance(settings, RWalkSettings):
-        kwargs = {"rwalk_settings": settings}
-    elif isinstance(settings, SRWalkSettings):
+    if isinstance(settings, SRWalkSettings):
         kwargs = {"srwalk_settings": settings}
     else:
         kwargs = {"ensemble_rwalk_settings": settings}
@@ -207,35 +204,12 @@ def test_mor_rwalk_uses_one_morph_batch_then_switches_to_srwalk() -> None:
     )
 
 
-def test_mcmc_likelihood_limit_never_returns_a_shortened_chain() -> None:
-    model, proposal = _constant_problem()
-    result = NISMOSampler(
-        model=model,
-        importance_morph=proposal,
-        proposal_scheme="rwalk",
-        rwalk_settings=RWalkSettings(walks=4),
-        n_live=10,
-        rng=89,
-        tie_policy="randomized_plateau",
-    ).run(
-        dlogz=0.1,
-        max_iterations=100,
-        max_likelihood_calls=13,
-        max_proposals_per_replacement=20,
-    )
-    assert not result.success
-    assert result.termination_reason == "max_likelihood_calls"
-    assert result.niter == 0
-    assert result.n_likelihood_calls == 10
-    assert result.n_proposals == 0
-
-
-def test_rwalk_exposes_only_the_skilling_method_citation() -> None:
+def test_srwalk_exposes_the_skilling_method_citation() -> None:
     model, proposal = _constant_problem()
     sampler = NISMOSampler(
         model=model,
         importance_morph=proposal,
-        proposal_scheme="rwalk",
+        proposal_scheme="s-rwalk",
         n_live=10,
         rng=90,
     )
@@ -244,23 +218,19 @@ def test_rwalk_exposes_only_the_skilling_method_citation() -> None:
     ]
 
 
-def test_rwalk_default_uses_ndim_plus_twenty_walks() -> None:
+def test_plain_rwalk_scheme_is_rejected_and_not_exported() -> None:
+    import nismo
+
     model, proposal = _constant_problem()
-    result = NISMOSampler(
-        model=model,
-        importance_morph=proposal,
-        proposal_scheme="rwalk",
-        n_live=10,
-        rng=91,
-        tie_policy="randomized_plateau",
-    ).run(
-        dlogz=0.1,
-        max_iterations=1,
-        max_proposals_per_replacement=21,
-    )
-    assert result.niter == 1
-    assert result.n_proposals == 21
-    assert result.history.mcmc_completed[0] == 21
+    assert not hasattr(nismo, "RWalkSettings")
+    with pytest.raises(ConfigurationError, match="unsupported proposal_scheme"):
+        NISMOSampler(
+            model=model,
+            importance_morph=proposal,
+            proposal_scheme="rwalk",  # type: ignore[arg-type]
+            n_live=10,
+            rng=92,
+        )
 
 
 def test_srwalk_profiling_reports_rolling_geometry_and_component_timings() -> None:
