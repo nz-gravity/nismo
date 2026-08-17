@@ -25,20 +25,12 @@ from typing import Any
 
 import numpy as np
 
-from nismo import MorphProposal, MORWalkSettings, NISMOSampler, ParallelSettings
+from nismo import MorphProposal, NISMOSampler, ParallelSettings
 
-<<<<<<< HEAD
 NISMO_PROPOSAL_SCHEME = "s-rwalk"
 NISMO_N_LIVE = 2000
 NISMO_DLOGZ = 0.1
 NISMO_MORPH_TYPE = "2_group"
-=======
-NISMO_PROPOSAL_SCHEME = "mor-rwalk"
-NISMO_N_LIVE = 500
-NISMO_DLOGZ = 0.1
-NISMO_MORPH_TYPE = "2_group"
-NISMO_MOR_RWALK_N_PROPOSALS = 20_000
->>>>>>> 7660d5666347ab5cbc7d7188820b5df3f308b1f4
 NISMO_DEFAULT_SEED = 20260811
 POSTERIOR_AUDIT_POINTS = 32
 POSTERIOR_AUDIT_TOLERANCE = 1.0e-6
@@ -228,8 +220,6 @@ def run_nismo(
     dlogz: float,
     seed: int,
     morph_type: str,
-    proposal_scheme: str,
-    mor_rwalk_n_proposals: int,
     max_iterations: int | None,
     progress: bool = True,
 ) -> tuple[Any, Any]:
@@ -241,19 +231,14 @@ def run_nismo(
         morph_type=morph_type,
         kde_bw="silverman",
     )
-    sampler_kwargs: dict[str, Any] = {
-        "model": model,
-        "importance_morph": proposal,
-        "proposal_scheme": proposal_scheme,
-        "n_live": n_live,
-        "rng": seed,
-        "parallel": parallel_settings,
-    }
-    if proposal_scheme == "mor-rwalk":
-        sampler_kwargs["mor_rwalk_settings"] = MORWalkSettings(
-            n_proposals=mor_rwalk_n_proposals,
-        )
-    sampler = NISMOSampler(**sampler_kwargs)
+    sampler = NISMOSampler(
+        model=model,
+        importance_morph=proposal,
+        proposal_scheme=NISMO_PROPOSAL_SCHEME,
+        n_live=n_live,
+        rng=seed,
+        parallel=parallel_settings,
+    )
     run_kwargs: dict[str, Any] = {"dlogz": dlogz, "progress": progress}
     if max_iterations is not None:
         run_kwargs["max_iterations"] = max_iterations
@@ -269,7 +254,6 @@ def result_payload(
     names: Sequence[str],
     audit: dict[str, float | int],
     morphz: dict[str, Any] | None,
-    proposal_scheme: str,
     dynesty_nlive: int,
     seed: int,
     n_live: int,
@@ -287,7 +271,7 @@ def result_payload(
         "dlogz": dlogz,
         "max_iterations": max_iterations,
         "seed": seed,
-        "proposal_scheme": proposal_scheme,
+        "proposal_scheme": NISMO_PROPOSAL_SCHEME,
         "parallel": {"n_workers": 4, "queue_size": 4},
         "morph_metadata": {
             "selected_groups": [
@@ -326,22 +310,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         help="live points in the Dynesty result used to train NISMO",
     )
     parser.add_argument(
-        "--proposal-scheme",
-        choices=("mor-rwalk", "s-rwalk", "en-rwalk"),
-        default=NISMO_PROPOSAL_SCHEME,
-        help="NISMO replacement scheme to use for this replica",
-    )
-    parser.add_argument(
         "--nismo-seed",
         type=int,
         default=NISMO_DEFAULT_SEED,
         help="random seed for this NISMO replica",
-    )
-    parser.add_argument(
-        "--mor-rwalk-n-proposals",
-        type=int,
-        default=NISMO_MOR_RWALK_N_PROPOSALS,
-        help="initial Morph pool size when proposal_scheme is mor-rwalk",
     )
     return parser.parse_args(arguments)
 
@@ -357,7 +329,7 @@ def main() -> None:
     result_path = dynesty_result_path(
         result_root, args.lvk_seed, args.dynesty_nlive
     ).resolve()
-    scheme_name = args.proposal_scheme.replace("-", "_")
+    scheme_name = NISMO_PROPOSAL_SCHEME.replace("-", "_")
     training_name = (
         "dynesty"
         if args.dynesty_nlive == 2_000
@@ -413,8 +385,6 @@ def main() -> None:
         dlogz=NISMO_DLOGZ,
         seed=args.nismo_seed,
         morph_type=NISMO_MORPH_TYPE,
-        proposal_scheme=args.proposal_scheme,
-        mor_rwalk_n_proposals=args.mor_rwalk_n_proposals,
         max_iterations=max_iterations,
         progress=True,
     )
@@ -427,7 +397,6 @@ def main() -> None:
         names=names,
         audit=audit,
         morphz=morphz,
-        proposal_scheme=args.proposal_scheme,
         dynesty_nlive=args.dynesty_nlive,
         seed=args.nismo_seed,
         n_live=NISMO_N_LIVE,

@@ -79,20 +79,17 @@ def test_default_max_iterations_scales_with_live_count() -> None:
     assert RUNNER.default_max_iterations(2_000) == 50_000
 
 
-def test_ligo_runner_defaults_to_mor_rwalk() -> None:
-    assert RUNNER.NISMO_PROPOSAL_SCHEME == "mor-rwalk"
+def test_ligo_runner_is_fixed_to_srwalk() -> None:
+    assert RUNNER.NISMO_PROPOSAL_SCHEME == "s-rwalk"
 
 
-def test_ligo_runner_cli_selects_scheme_and_replica_seed() -> None:
+def test_ligo_runner_cli_selects_replica_seed() -> None:
     defaults = RUNNER.parse_args(["48"])
     replica = RUNNER.parse_args(["48", "--nismo-seed", "47"])
-    explicit = RUNNER.parse_args(["47", "--proposal-scheme", "s-rwalk"])
 
     assert defaults.lvk_seed == 48
     assert defaults.nismo_seed == RUNNER.NISMO_DEFAULT_SEED
-    assert defaults.proposal_scheme == "mor-rwalk"
     assert replica.nismo_seed == 47
-    assert explicit.proposal_scheme == "s-rwalk"
 
 
 def test_dynesty_result_path_keeps_low_live_runs_isolated(tmp_path: Path) -> None:
