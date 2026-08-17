@@ -13,9 +13,9 @@ from nismo import (
     EnsembleMoveWeights,
     EnsembleRWalkSettings,
     NISMOSampler,
-    RWalkSettings,
     SRWalkSettings,
 )
+from nismo.config import RWalkSettings
 from nismo.constrained import BatchEvaluator, ConstrainedAttempt
 from nismo.mcmc import (
     RWalkSampler,
@@ -348,7 +348,6 @@ def test_end_to_end_gaussian_evidence_agrees_across_replacement_schemes() -> Non
     exact_logz = -0.25 - 0.5 * np.log(2.0)
     schemes = (
         ("fixed_morph", {}),
-        ("rwalk", {"rwalk_settings": RWalkSettings(walks=16)}),
         ("s-rwalk", {"srwalk_settings": SRWalkSettings(n_steps=16)}),
         (
             "en-rwalk",

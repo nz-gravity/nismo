@@ -21,7 +21,6 @@ ProposalScheme = Literal[
     "fixed_morph",
     "adaptive_morph",
     "mor-rwalk",
-    "rwalk",
     "s-rwalk",
     "en-rwalk",
 ]
@@ -398,8 +397,6 @@ class NISMOConfig:
         Metropolis replacement kernels.
     proposal_update_interval
         Completed-iteration interval between adaptive Morph refit attempts.
-    rwalk_settings
-        Dynesty-style random-walk Metropolis settings.
     srwalk_settings
         Gaussian-covariance random-walk Metropolis settings.
     mor_rwalk_settings
@@ -426,7 +423,12 @@ class NISMOConfig:
     proposal_batch_size: int = 64
     proposal_scheme: ProposalScheme = "fixed_morph"
     proposal_update_interval: int = 25
-    rwalk_settings: RWalkSettings = field(default_factory=RWalkSettings)
+    rwalk_settings: RWalkSettings = field(
+        default_factory=RWalkSettings,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     srwalk_settings: SRWalkSettings = field(default_factory=SRWalkSettings)
     mor_rwalk_settings: MORWalkSettings | None = None
     ensemble_rwalk_settings: EnsembleRWalkSettings = field(
@@ -483,7 +485,6 @@ class NISMOConfig:
             "fixed_morph",
             "adaptive_morph",
             "mor-rwalk",
-            "rwalk",
             "s-rwalk",
             "en-rwalk",
         ):

@@ -7,7 +7,6 @@ from numpy.typing import NDArray
 from nismo import (
     EnsembleRWalkSettings,
     NISMOSampler,
-    RWalkSettings,
     SRWalkSettings,
 )
 
@@ -52,7 +51,6 @@ class ShiftedGaussianModel:
 @pytest.mark.parametrize(
     ("proposal_scheme", "settings"),
     [
-        ("rwalk", {"rwalk_settings": RWalkSettings(walks=12)}),
         ("s-rwalk", {"srwalk_settings": SRWalkSettings(n_steps=12)}),
         (
             "en-rwalk",

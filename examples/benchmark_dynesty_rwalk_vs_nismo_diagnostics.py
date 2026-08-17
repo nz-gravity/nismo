@@ -125,7 +125,6 @@ METHOD_ORDER = {
     "dynesty_rwalk": 0,
     "nismo_fixed_morph": 1,
     "nismo_adaptive_morph": 1,
-    "nismo_rwalk": 1,
     "nismo_s-rwalk": 1,
     "nismo_en-rwalk": 1,
 }
@@ -757,7 +756,6 @@ def run_nismo(
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
         NISMOSampler,
-        RWalkSettings,
         SRWalkSettings,
     )
 
@@ -781,16 +779,12 @@ def run_nismo(
                 gaussian=ensemble_gaussian_weight,
             ),
         )
-    elif proposal_scheme == "rwalk":
-        sampler_kwargs["rwalk_settings"] = RWalkSettings(
-            walks=rwalk_walks,
-            facc=rwalk_facc,
-        )
     elif proposal_scheme == "s-rwalk":
         sampler_kwargs["srwalk_settings"] = SRWalkSettings(
             n_steps=srwalk_steps,
         )
 
+    sampler_kwargs["parallel"] = ParallelSettings(n_workers=8)
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
     result = sampler.run(

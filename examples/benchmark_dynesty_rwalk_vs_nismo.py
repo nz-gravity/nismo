@@ -85,6 +85,8 @@ from typing import Any
 import numpy as np
 from scipy.special import logsumexp
 
+SCRIPT_BUILD = "2026-08-14-info-replot-v2"
+
 RAW_FIELDS = [
     "method",
     "method_label",
@@ -99,6 +101,7 @@ RAW_FIELDS = [
     "error",
     "abs_error",
     "squared_error",
+    "information",
     "ncall_direct",
     "ncall_training",
     "ncall_amortized",
@@ -340,6 +343,7 @@ def make_success_row(
     n_training_samples: int = 0,
     training_pilot_seed: int | None = None,
     training_pilot_repeat: int | None = None,
+    information: float = math.nan,
     termination_reason: str = "",
     status: str = "success",
     message: str = "",
@@ -359,6 +363,7 @@ def make_success_row(
         "error": error,
         "abs_error": abs(error),
         "squared_error": error**2,
+        "information": information,
         "ncall_direct": ncall_direct,
         "ncall_training": ncall_training,
         "ncall_amortized": ncall_amortized,
@@ -407,6 +412,7 @@ def make_failure_row(
         "error": "",
         "abs_error": "",
         "squared_error": "",
+        "information": "",
         "ncall_direct": "",
         "ncall_training": "",
         "ncall_amortized": "",
@@ -438,6 +444,10 @@ def run_dynesty(
     """Run one static Dynesty rwalk calculation."""
     import dynesty
     from dynesty import utils as dyfunc
+    import time
+    from dynesty.pool import Pool
+
+    n_workers = 24
 
     sampler_kwargs: dict[str, Any] = {
         "nlive": nlive,
@@ -446,22 +456,55 @@ def run_dynesty(
         "rstate": np.random.default_rng(seed),
         "facc": facc,
     }
+
     if walks is not None:
         sampler_kwargs["walks"] = walks
 
     start = time.perf_counter()
-    sampler = dynesty.NestedSampler(
+
+    with Pool(
+        n_workers,
         model.log_likelihood,
         model.prior_transform,
-        model.ndim,
-        **sampler_kwargs,
-    )
-    sampler.run_nested(dlogz=dlogz, print_progress=progress)
+    ) as pool:
+
+        sampler = dynesty.NestedSampler(
+            pool.loglike,
+            pool.prior_transform,
+            model.ndim,
+            pool=pool,
+            queue_size=n_workers,
+            **sampler_kwargs,
+        )
+
+        sampler.run_nested()
+
+    results = sampler.results
+    elapsed = time.perf_counter() - start
+    # sampler_kwargs: dict[str, Any] = {
+    #     "nlive": nlive,
+    #     "sample": "rwalk",
+    #     "bound": bound,
+    #     "rstate": np.random.default_rng(seed),
+    #     "facc": facc,
+    # }
+    # if walks is not None:
+    #     sampler_kwargs["walks"] = walks
+
+    # start = time.perf_counter()
+    # sampler = dynesty.NestedSampler(
+    #     model.log_likelihood,
+    #     model.prior_transform,
+    #     model.ndim,
+    #     **sampler_kwargs,
+    # )
+    # sampler.run_nested(dlogz=dlogz, print_progress=progress)
     runtime_s = time.perf_counter() - start
     result = sampler.results
 
     logz = float(np.asarray(result.logz)[-1])
     logzerr = float(np.asarray(result.logzerr)[-1])
+    information = float(np.asarray(result.information)[-1])
     ncall = int(np.sum(np.asarray(result.ncall, dtype=np.int64)))
     niter = int(getattr(result, "niter", len(result.logl)))
 
@@ -482,6 +525,7 @@ def run_dynesty(
     statistics = {
         "logz": logz,
         "logzerr": logzerr,
+        "information": information,
         "ncall": ncall,
         "niter": niter,
         "runtime_s": runtime_s,
@@ -585,6 +629,7 @@ def run_nismo(
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
         NISMOSampler,
+        ParallelSettings,
         RWalkSettings,
         SRWalkSettings,
     )
@@ -621,6 +666,7 @@ def run_nismo(
 
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
+    parallel = ParallelSettings(n_workers=24)
     result = sampler.run(
         dlogz=dlogz,
         max_iterations=max_iterations,
@@ -634,6 +680,7 @@ def run_nismo(
     return {
         "logz": float(result.logz),
         "logzerr": float(result.logzerr),
+        "information": float(result.information),
         "ncall": int(result.n_likelihood_calls),
         "niter": int(result.niter),
         "nproposals": int(result.n_proposals),
@@ -642,6 +689,29 @@ def run_nismo(
         "termination_reason": str(result.termination_reason),
         "warnings": tuple(str(item) for item in result.warnings),
     }
+
+
+def information_from_row(row: dict[str, str]) -> tuple[float, bool]:
+    """Return posterior-vs-prior information H in nats for one saved row.
+
+    New runs store the sampler's native information value directly.  Legacy
+    raw CSV files created before that field existed can still be replotted by
+    using the standard static nested-sampling relation
+
+        sigma(log Z) ~= sqrt(H / nlive),
+
+    i.e. H ~= nlive * logzerr**2.  The boolean return value is True only for
+    this legacy inference so summaries can report how many points were inferred.
+    """
+    stored = finite_float(row.get("information"))
+    if math.isfinite(stored):
+        return stored, False
+
+    nlive = integer_or_zero(row.get("nlive"))
+    logzerr = finite_float(row.get("logzerr"))
+    if nlive > 0 and math.isfinite(logzerr) and logzerr >= 0.0:
+        return float(nlive * logzerr**2), True
+    return math.nan, False
 
 
 def sample_standard_deviation(values: np.ndarray) -> float:
@@ -657,8 +727,15 @@ def summarize_rows(
     ncall_metric: str,
     summary_path: Path,
     requested_nlive: set[int] | None = None,
+    include_incomplete: bool = False,
 ) -> list[dict[str, Any]]:
-    """Aggregate successful runs by method and n_live."""
+    """Aggregate usable runs by method and n_live.
+
+    By default only successful runs are used.  ``include_incomplete=True`` also
+    includes partial runs (for example ``max_wall_time`` terminations) whenever
+    they contain a finite saved logZ and the requested likelihood-call metric.
+    Failed rows without numerical results are always excluded.
+    """
     ncall_field = {
         "direct": "ncall_direct",
         "amortized": "ncall_amortized",
@@ -673,10 +750,14 @@ def summarize_rows(
             continue
         if repeat < 0 or repeat >= repeats:
             continue
-        if row.get("status") != "success":
+        status = row.get("status")
+        if status != "success" and not (
+            include_incomplete and status == "incomplete"
+        ):
             continue
         logz = finite_float(row.get("logz"))
-        if not math.isfinite(logz):
+        ncall_value = finite_float(row.get(ncall_field))
+        if not math.isfinite(logz) or not math.isfinite(ncall_value):
             continue
         key = (row["method"], nlive)
         groups.setdefault(key, []).append(row)
@@ -724,14 +805,26 @@ def summarize_rows(
             [finite_float(row["proposal_fit_time_s"], 0.0) for row in group],
             dtype=float,
         )
+        information_values: list[float] = []
+        information_inferred_n = 0
+        for row in group:
+            information_value, inferred = information_from_row(row)
+            if math.isfinite(information_value):
+                information_values.append(information_value)
+                information_inferred_n += int(inferred)
+        information = np.asarray(information_values, dtype=float)
         n = len(group)
+        n_success = sum(row.get("status") == "success" for row in group)
+        n_incomplete = sum(row.get("status") == "incomplete" for row in group)
 
         summaries.append(
             {
                 "method": method,
                 "method_label": group[0]["method_label"],
                 "nlive": nlive,
-                "n_success": n,
+                "n_success": n_success,
+                "n_incomplete": n_incomplete,
+                "n_used": n,
                 "n_requested": repeats,
                 "true_logz": true_logz,
                 "logz_mean": float(np.mean(logz)),
@@ -745,6 +838,16 @@ def summarize_rows(
                 "logz_q16": float(np.quantile(logz, 0.16)),
                 "logz_q84": float(np.quantile(logz, 0.84)),
                 "logzerr_mean": float(np.nanmean(logzerr)),
+                "information_n": int(len(information)),
+                "information_inferred_n": int(information_inferred_n),
+                "information_mean": (
+                    float(np.mean(information)) if len(information) else math.nan
+                ),
+                "information_std": (
+                    sample_standard_deviation(information)
+                    if len(information)
+                    else math.nan
+                ),
                 "bias": float(np.mean(errors)),
                 "mean_abs_error": float(np.mean(np.abs(errors))),
                 "rmse": float(np.sqrt(np.mean(errors**2))),
@@ -769,6 +872,8 @@ def summarize_rows(
         "method_label",
         "nlive",
         "n_success",
+        "n_incomplete",
+        "n_used",
         "n_requested",
         "true_logz",
         "logz_mean",
@@ -778,6 +883,10 @@ def summarize_rows(
         "logz_q16",
         "logz_q84",
         "logzerr_mean",
+        "information_n",
+        "information_inferred_n",
+        "information_mean",
+        "information_std",
         "bias",
         "mean_abs_error",
         "rmse",
@@ -817,7 +926,7 @@ def plot_summary(
     import matplotlib.pyplot as plt
 
     if not summaries:
-        raise RuntimeError("No successful runs are available to plot")
+        raise RuntimeError("No usable runs are available to plot")
 
     methods = sorted(
         {str(row["method"]) for row in summaries},
@@ -909,7 +1018,7 @@ def plot_summary(
             capsize=3,
         )
 
-    axis_logz.set_ylabel(r"$\log Z$")
+    axis_logz.set_ylabel(r"$\log(z)$")
     axis_calls.set_ylabel("Likelihood calls")
     axis_calls.set_xlabel(r"$n_{\rm live}$")
 
@@ -921,14 +1030,14 @@ def plot_summary(
         "amortized": "calls incl. amortized Morph training",
         "cold-start": "calls incl. full Morph training",
     }[ncall_metric]
-    axis_calls.text(
-        0.015,
-        0.06,
-        metric_note,
-        transform=axis_calls.transAxes,
-        fontsize=8,
-        va="bottom",
-    )
+    # axis_calls.text(
+    #     0.015,
+    #     0.06,
+    #     metric_note,
+    #     transform=axis_calls.transAxes,
+    #     fontsize=8,
+    #     va="bottom",
+    # )
 
     for axis in (axis_logz, axis_calls):
         axis.grid(True, which="major", linestyle=":", alpha=0.35)
@@ -949,6 +1058,261 @@ def plot_summary(
     return png_path, pdf_path
 
 
+def plot_information(
+    *,
+    summaries: list[dict[str, Any]],
+    output_dir: Path,
+    show: bool,
+) -> tuple[Path, Path] | None:
+    """Plot posterior-vs-prior information H = KL(posterior || prior)."""
+    import matplotlib.pyplot as plt
+
+    usable = [
+        row
+        for row in summaries
+        if int(row.get("information_n", 0)) > 0
+        and math.isfinite(finite_float(row.get("information_mean")))
+    ]
+    if not usable:
+        print("No finite posterior|prior information values are available to plot.")
+        return None
+
+    methods = sorted(
+        {str(row["method"]) for row in usable},
+        key=lambda method: METHOD_ORDER.get(method, 99),
+    )
+    styles = {
+        "dynesty_rwalk": {
+            "color": "black",
+            "marker": "o",
+            "linestyle": "-",
+        },
+    }
+
+    fig, axis = plt.subplots(figsize=(7.2, 4.8))
+    for method_index, method in enumerate(methods):
+        group = sorted(
+            (row for row in usable if row["method"] == method),
+            key=lambda row: int(row["nlive"]),
+        )
+        x = np.asarray([row["nlive"] for row in group], dtype=float)
+        mean = np.asarray([row["information_mean"] for row in group], dtype=float)
+        std = np.asarray([row["information_std"] for row in group], dtype=float)
+        std = np.where(np.isfinite(std), std, 0.0)
+
+        style = styles.get(
+            method,
+            {
+                "color": "tab:red" if method_index == 1 else f"C{method_index}",
+                "marker": "o",
+                "linestyle": "--",
+            },
+        )
+        label = str(group[0]["method_label"])
+        axis.fill_between(
+            x,
+            np.maximum(0.0, mean - std),
+            mean + std,
+            color=style["color"],
+            alpha=0.12,
+            linewidth=0,
+        )
+        axis.errorbar(
+            x,
+            mean,
+            yerr=std,
+            label=label,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.1,
+            markersize=4.5,
+            capsize=3,
+        )
+
+    axis.set_xlabel(r"$n_{\rm live}$")
+    axis.set_ylabel(
+        # r"Information $H=D_{\rm KL}(p(\theta\mid D)\Vert\pi(\theta))$ [nats]"
+        r"Information $(H)$ [nats]"
+
+    )
+    axis.grid(True, which="major", linestyle=":", alpha=0.35)
+    axis.minorticks_on()
+    axis.tick_params(direction="in", top=True, right=True)
+    axis.legend(loc="best", frameon=True)
+
+    png_path = output_dir / "dynesty_rwalk_vs_nismo_information.png"
+    pdf_path = output_dir / "dynesty_rwalk_vs_nismo_information.pdf"
+    fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return png_path, pdf_path
+
+
+
+def plot_information_from_rows(
+    *,
+    rows: dict[tuple[str, int, int], dict[str, str]],
+    output_dir: Path,
+    show: bool,
+    include_incomplete: bool = True,
+    requested_nlive: set[int] | None = None,
+) -> tuple[Path, Path]:
+    """Plot posterior-vs-prior information directly from raw run rows.
+
+    This path is intentionally independent of the evidence/call-count summary.
+    It therefore still works when a partial run has a usable information value
+    (or a legacy logzerr from which H can be inferred) but lacks some call-count
+    field needed by the main benchmark summary.
+
+    New rows use the sampler-native ``information`` value. Legacy rows that
+    predate that column fall back to ``H ~= nlive * logzerr**2`` and are marked
+    as inferred in ``information_summary.csv``.
+    """
+    import matplotlib.pyplot as plt
+
+    grouped: dict[tuple[str, int], list[tuple[float, bool, str]]] = {}
+    for row in rows.values():
+        status = str(row.get("status", ""))
+        if status == "success":
+            pass
+        elif include_incomplete and status == "incomplete":
+            pass
+        else:
+            continue
+
+        nlive = integer_or_zero(row.get("nlive"))
+        if nlive <= 0:
+            continue
+        if requested_nlive is not None and nlive not in requested_nlive:
+            continue
+
+        value, inferred = information_from_row(row)
+        if not math.isfinite(value):
+            continue
+        method = str(row.get("method", ""))
+        if not method:
+            continue
+        label = str(row.get("method_label") or method)
+        grouped.setdefault((method, nlive), []).append((float(value), inferred, label))
+
+    if not grouped:
+        raise RuntimeError(
+            "No posterior|prior information values could be recovered from raw_runs.csv. "
+            "For legacy runs this requires a finite logzerr; new runs store the "
+            "native information value directly."
+        )
+
+    information_rows: list[dict[str, Any]] = []
+    for (method, nlive), values in sorted(
+        grouped.items(),
+        key=lambda item: (item[0][1], METHOD_ORDER.get(item[0][0], 99)),
+    ):
+        arr = np.asarray([item[0] for item in values], dtype=float)
+        n_inferred = sum(bool(item[1]) for item in values)
+        information_rows.append(
+            {
+                "method": method,
+                "method_label": values[0][2],
+                "nlive": nlive,
+                "n_used": len(values),
+                "n_native": len(values) - n_inferred,
+                "n_inferred": n_inferred,
+                "information_mean": float(np.mean(arr)),
+                "information_std": sample_standard_deviation(arr),
+            }
+        )
+
+    info_summary_path = output_dir / "information_summary.csv"
+    with info_summary_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=(
+                "method",
+                "method_label",
+                "nlive",
+                "n_used",
+                "n_native",
+                "n_inferred",
+                "information_mean",
+                "information_std",
+            ),
+        )
+        writer.writeheader()
+        writer.writerows(information_rows)
+
+    methods = sorted(
+        {str(row["method"]) for row in information_rows},
+        key=lambda method: METHOD_ORDER.get(method, 99),
+    )
+    styles = {
+        "dynesty_rwalk": {"color": "black", "marker": "o", "linestyle": "-"},
+    }
+
+    fig, axis = plt.subplots(figsize=(7.2, 4.8))
+    for method_index, method in enumerate(methods):
+        group = sorted(
+            (row for row in information_rows if row["method"] == method),
+            key=lambda row: int(row["nlive"]),
+        )
+        x = np.asarray([row["nlive"] for row in group], dtype=float)
+        mean = np.asarray([row["information_mean"] for row in group], dtype=float)
+        std = np.asarray([row["information_std"] for row in group], dtype=float)
+        std = np.where(np.isfinite(std), std, 0.0)
+
+        style = styles.get(
+            method,
+            {
+                "color": "tab:red" if method_index == 1 else f"C{method_index}",
+                "marker": "o",
+                "linestyle": "--",
+            },
+        )
+        label = str(group[0]["method_label"])
+        axis.fill_between(
+            x, np.maximum(0.0, mean - std), mean + std,
+            color=style["color"], alpha=0.12, linewidth=0,
+        )
+        axis.errorbar(
+            x, mean, yerr=std, label=label,
+            color=style["color"], marker=style["marker"],
+            linestyle=style["linestyle"], linewidth=1.1,
+            markersize=4.5, capsize=3,
+        )
+
+    axis.set_xlabel(r"$n_{\rm live}$")
+    # axis.set_ylabel(r"Information $H=D_{\rm KL}(p(\theta\mid D)\Vert\pi(\theta))$ [nats]")
+    axis.set_ylabel(r"Information $(H)$ [nats]")
+
+    
+    axis.grid(True, which="major", linestyle=":", alpha=0.35)
+    axis.minorticks_on()
+    axis.tick_params(direction="in", top=True, right=True)
+    axis.legend(loc="best", frameon=True)
+
+    png_path = output_dir / "dynesty_rwalk_vs_nismo_information.png"
+    pdf_path = output_dir / "dynesty_rwalk_vs_nismo_information.pdf"
+    fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    if not png_path.exists() or not pdf_path.exists():
+        raise RuntimeError("Information plot generation completed but output files are missing")
+
+    n_native = sum(int(row["n_native"]) for row in information_rows)
+    n_inferred = sum(int(row["n_inferred"]) for row in information_rows)
+    print(
+        f"Information rows used: native={n_native}, legacy-inferred={n_inferred}. "
+        f"Summary: {info_summary_path}"
+    )
+    return png_path, pdf_path
+
 def print_summary(summaries: list[dict[str, Any]]) -> None:
     if not summaries:
         print("No successful runs were available for the summary.")
@@ -965,7 +1329,7 @@ def print_summary(summaries: list[dict[str, Any]]) -> None:
         print(
             f"{row['method_label']:<22} "
             f"{int(row['nlive']):>7d} "
-            f"{int(row['n_success']):>3d}/{int(row['n_requested']):<3d} "
+            f"{int(row.get('n_used', row['n_success'])):>3d}/{int(row['n_requested']):<3d} "
             f"{float(row['logz_mean']):>13.5f} "
             f"{float(row['logz_std']):>10.5f} "
             f"{float(row['bias']):>10.5f} "
@@ -981,7 +1345,7 @@ def print_incomplete_summary(
     nlive_values: list[int],
     repeats: int,
 ) -> None:
-    """Make excluded partial runs visible in terminal benchmark output."""
+    """Make partial/failed rows visible in terminal benchmark output."""
     incomplete: dict[tuple[str, int], list[str]] = {}
     labels: dict[tuple[str, int], str] = {}
     for row in rows.values():
@@ -997,7 +1361,7 @@ def print_incomplete_summary(
         incomplete.setdefault(key, []).append(reason)
     if not incomplete:
         return
-    print("\nExcluded incomplete/failed runs")
+    print("\nIncomplete/failed runs in raw data")
     for key, reasons in sorted(
         incomplete.items(),
         key=lambda item: (item[0][1], METHOD_ORDER.get(item[0][0], 99)),
@@ -1011,11 +1375,76 @@ def print_incomplete_summary(
         print(f"  {labels[key]}, nlive={key[1]}: {rendered_reasons}")
 
 
+def _cli_option_supplied(option: str) -> bool:
+    """Return True when an option was explicitly present on this command line."""
+    prefix = option + "="
+    return any(token == option or token.startswith(prefix) for token in sys.argv[1:])
+
+
+def find_previous_benchmark_output_dir(search_root: Path) -> Path:
+    """Find the most recently updated benchmark directory near ``search_root``.
+
+    The search intentionally stays shallow (the current directory plus two
+    directory levels) so ``--replot`` is quick even in a large repository.
+    """
+    root = search_root.expanduser().resolve()
+    candidates: list[Path] = []
+    for pattern in ("raw_runs.csv", "*/raw_runs.csv", "*/*/raw_runs.csv"):
+        candidates.extend(path for path in root.glob(pattern) if path.is_file())
+    if not candidates:
+        raise FileNotFoundError(
+            f"--replot could not find an existing raw_runs.csv under {root} "
+            "(searched the current directory and two levels below it). "
+            "Pass --output-dir explicitly if the run is elsewhere."
+        )
+    latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    return latest.parent
+
+
+def load_saved_config(output_dir: Path) -> dict[str, Any]:
+    """Load the saved benchmark configuration when available."""
+    path = output_dir / "benchmark_config.json"
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as stream:
+        loaded = json.load(stream)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def infer_replot_grid(
+    rows: dict[tuple[str, int, int], dict[str, str]],
+) -> tuple[list[int], int]:
+    """Infer nlive values and repeat count directly from the saved raw rows."""
+    nlive_values = sorted(
+        {integer_or_zero(row.get("nlive")) for row in rows.values()} - {0}
+    )
+    if not nlive_values:
+        raise RuntimeError("raw_runs.csv does not contain any usable nlive values")
+    repeats = max(integer_or_zero(row.get("repeat")) for row in rows.values()) + 1
+    return nlive_values, max(repeats, 1)
+
+
+def infer_replot_true_logz(
+    rows: dict[tuple[str, int, int], dict[str, str]],
+    saved_config: dict[str, Any],
+) -> float:
+    """Recover the reference logZ from config, falling back to raw rows."""
+    configured = finite_float(saved_config.get("true_logz"))
+    if math.isfinite(configured):
+        return configured
+    for row in rows.values():
+        value = finite_float(row.get("true_logz"))
+        if math.isfinite(value):
+            return value
+    raise RuntimeError("Could not infer true_logz from benchmark_config.json or raw_runs.csv")
+
+
 _PRESENTATION_ARGUMENTS = frozenset(
     {
         "output_dir",
         "overwrite",
         "plot_only",
+        "replot",
         "progress",
         "resume",
         "show",
@@ -1268,7 +1697,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--nismo-proposal-scheme",
         choices=("fixed_morph", "adaptive_morph", "rwalk", "s-rwalk", "en-rwalk"),
-        default="en-rwalk",
+        default="s-rwalk",
         help="NISMO constrained replacement scheme.",
     )
     parser.add_argument("--proposal-batch-size", type=int, default=64)
@@ -1332,6 +1761,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Read the existing raw CSV and regenerate summary/plots only.",
     )
+    parser.add_argument(
+        "--replot",
+        action="store_true",
+        help=(
+            "Find the most recent previous benchmark run and regenerate its "
+            "summary/plots, including a separate posterior|prior information "
+            "plot and numerically usable incomplete runs. "
+            "Use --output-dir to target a specific run."
+        ),
+    )
     parser.add_argument("--show", action="store_true")
     return parser
 
@@ -1339,6 +1778,92 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.replot:
+        print(f"Replot build: {SCRIPT_BUILD}")
+        if _cli_option_supplied("--output-dir"):
+            output_dir = args.output_dir.expanduser().resolve()
+        else:
+            output_dir = find_previous_benchmark_output_dir(Path.cwd())
+
+        raw_path = output_dir / "raw_runs.csv"
+        summary_path = output_dir / "summary.csv"
+        if not raw_path.exists():
+            raise FileNotFoundError(
+                f"--replot requested, but {raw_path} does not exist"
+            )
+
+        rows = read_raw_rows(raw_path)
+        if not rows:
+            raise RuntimeError(f"{raw_path} contains no run rows")
+
+        saved_config = load_saved_config(output_dir)
+        saved_args = saved_config.get("arguments", {})
+        if not isinstance(saved_args, dict):
+            saved_args = {}
+
+        nlive_values, repeats = infer_replot_grid(rows)
+        true_logz = infer_replot_true_logz(rows, saved_config)
+
+        if _cli_option_supplied("--ncall-metric"):
+            ncall_metric = args.ncall_metric
+        else:
+            candidate_metric = str(saved_args.get("ncall_metric", args.ncall_metric))
+            ncall_metric = (
+                candidate_metric
+                if candidate_metric in {"direct", "amortized", "cold-start"}
+                else args.ncall_metric
+            )
+
+        if _cli_option_supplied("--linear-ncall-axis"):
+            linear_ncall_axis = args.linear_ncall_axis
+        else:
+            linear_ncall_axis = bool(
+                saved_args.get("linear_ncall_axis", args.linear_ncall_axis)
+            )
+
+        summaries = summarize_rows(
+            rows=rows,
+            repeats=repeats,
+            ncall_metric=ncall_metric,
+            summary_path=summary_path,
+            requested_nlive=set(nlive_values),
+            include_incomplete=True,
+        )
+        png_path, pdf_path = plot_summary(
+            summaries=summaries,
+            true_logz=true_logz,
+            ncall_metric=ncall_metric,
+            logarithmic_ncall_axis=not linear_ncall_axis,
+            output_dir=output_dir,
+            show=args.show,
+        )
+        print(f"Replot source: {output_dir}")
+        print(f"Replot raw data: {raw_path}")
+        information_paths = plot_information_from_rows(
+            rows=rows,
+            output_dir=output_dir,
+            show=args.show,
+            include_incomplete=True,
+            requested_nlive=set(nlive_values),
+        )
+        print("Included saved incomplete runs with finite logZ/call counts.")
+        print_summary(summaries)
+        print_incomplete_summary(
+            rows=rows,
+            nlive_values=nlive_values,
+            repeats=repeats,
+        )
+        print(f"\nSaved summary: {summary_path}")
+        print(f"Saved plots:   {png_path} and {pdf_path}")
+        if information_paths is not None:
+            print(
+                f"Saved information plots: {information_paths[0]} and "
+                f"{information_paths[1]}"
+            )
+            print(f"Saved information summary: {output_dir / 'information_summary.csv'}")
+        return 0
+
     validate_args(args)
     true_logz = resolve_true_logz(args)
 
@@ -1372,6 +1897,11 @@ def main() -> int:
             output_dir=output_dir,
             show=args.show,
         )
+        information_paths = plot_information(
+            summaries=summaries,
+            output_dir=output_dir,
+            show=args.show,
+        )
         print_summary(summaries)
         print_incomplete_summary(
             rows=rows,
@@ -1380,6 +1910,11 @@ def main() -> int:
         )
         print(f"\nSaved summary: {summary_path}")
         print(f"Saved plots:   {png_path} and {pdf_path}")
+        if information_paths is not None:
+            print(
+                f"Saved information plots: {information_paths[0]} and "
+                f"{information_paths[1]}"
+            )
         return 0
 
     if raw_path.exists() and not args.resume and not args.overwrite:
@@ -1459,6 +1994,7 @@ def main() -> int:
                     seed=pilot_seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
+                    information=statistics["information"],
                     true_logz=true_logz,
                     ncall_direct=statistics["ncall"],
                     ncall_training=0,
@@ -1537,6 +2073,7 @@ def main() -> int:
                     seed=seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
+                    information=statistics["information"],
                     true_logz=true_logz,
                     ncall_direct=statistics["ncall"],
                     ncall_training=0,
@@ -1697,6 +2234,7 @@ def main() -> int:
                     seed=seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
+                    information=statistics["information"],
                     true_logz=true_logz,
                     ncall_direct=direct,
                     ncall_training=pilot_ncall,
@@ -1763,6 +2301,11 @@ def main() -> int:
         output_dir=output_dir,
         show=args.show,
     )
+    information_paths = plot_information(
+        summaries=summaries,
+        output_dir=output_dir,
+        show=args.show,
+    )
     print_summary(summaries)
     print_incomplete_summary(
         rows=rows,
@@ -1772,6 +2315,11 @@ def main() -> int:
     print(f"\nSaved raw runs: {raw_path}")
     print(f"Saved summary:  {summary_path}")
     print(f"Saved plots:    {png_path} and {pdf_path}")
+    if information_paths is not None:
+        print(
+            f"Saved information plots: {information_paths[0]} and "
+            f"{information_paths[1]}"
+        )
     return 0
 
 
