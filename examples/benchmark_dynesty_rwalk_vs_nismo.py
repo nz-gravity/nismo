@@ -13,9 +13,10 @@ For each n_live value, the script:
 3. Fits one fixed MorphZ proposal from the thinned posterior, as in the notebook.
 4. Runs N independent Dynesty calculations and N independent NISMO calculations.
 5. Saves every run immediately to CSV, writes aggregate statistics, and creates
-   a two-panel publication-style figure:
+   publication-style evidence/call-count and information figures:
       top:    log(Z) versus n_live
       bottom: likelihood-call count versus n_live
+      separate: Bayesian posterior-versus-prior information versus n_live
 
 The pilot Dynesty run is also Dynesty repeat 0, so exactly N Dynesty results are
 reported for each n_live. All N NISMO repeats at a given n_live use the same
@@ -41,13 +42,15 @@ Example
 Install from the current NISMO repository and install Dynesty:
 
     pip install dynesty matplotlib scipy tqdm
-    pip install "nismo[morph,plot,progress] @ git+https://github.com/nz-gravity/nismo.git@main"
+    pip install "nismo[morph,plot,progress] @ git+https://github.com/nz-gravity/nismo.git@agent/dynesty-pool-parallelization"
 
 Run a small test:
 
     python benchmark_dynesty_rwalk_vs_nismo.py \
         --nlive 50 100 \
         --repeats 2 \
+        --n-workers 8 \
+        --queue-size 8 \
         --progress
 
 Run the full paper-style grid:
@@ -55,6 +58,8 @@ Run the full paper-style grid:
     python benchmark_dynesty_rwalk_vs_nismo.py \
         --nlive 50 100 200 300 400 500 \
         --repeats 10 \
+        --n-workers 24 \
+        --queue-size 24 \
         --ncall-metric direct \
         --progress
 
@@ -85,7 +90,7 @@ from typing import Any
 import numpy as np
 from scipy.special import logsumexp
 
-SCRIPT_BUILD = "2026-08-14-info-replot-v2"
+SCRIPT_BUILD = "2026-08-17-current-pool-api-post-prior-info-v1"
 
 RAW_FIELDS = [
     "method",
@@ -101,7 +106,11 @@ RAW_FIELDS = [
     "error",
     "abs_error",
     "squared_error",
+    # ``information`` is retained for compatibility with older raw CSV files.
+    # New rows store the unambiguous quantities in the following two columns.
     "information",
+    "information_post_prior",
+    "information_post_importance",
     "ncall_direct",
     "ncall_training",
     "ncall_amortized",
@@ -121,7 +130,7 @@ METHOD_ORDER = {
     "dynesty_rwalk": 0,
     "nismo_fixed_morph": 1,
     "nismo_adaptive_morph": 1,
-    "nismo_rwalk": 1,
+    "nismo_mor-rwalk": 1,
     "nismo_s-rwalk": 1,
     "nismo_en-rwalk": 1,
 }
@@ -343,7 +352,8 @@ def make_success_row(
     n_training_samples: int = 0,
     training_pilot_seed: int | None = None,
     training_pilot_repeat: int | None = None,
-    information: float = math.nan,
+    information_post_prior: float = math.nan,
+    information_post_importance: float = math.nan,
     termination_reason: str = "",
     status: str = "success",
     message: str = "",
@@ -363,7 +373,10 @@ def make_success_row(
         "error": error,
         "abs_error": abs(error),
         "squared_error": error**2,
-        "information": information,
+        # Keep the legacy column usable while making the definition explicit.
+        "information": information_post_prior,
+        "information_post_prior": information_post_prior,
+        "information_post_importance": information_post_importance,
         "ncall_direct": ncall_direct,
         "ncall_training": ncall_training,
         "ncall_amortized": ncall_amortized,
@@ -413,6 +426,8 @@ def make_failure_row(
         "abs_error": "",
         "squared_error": "",
         "information": "",
+        "information_post_prior": "",
+        "information_post_importance": "",
         "ncall_direct": "",
         "ncall_training": "",
         "ncall_amortized": "",
@@ -438,16 +453,15 @@ def run_dynesty(
     bound: str,
     walks: int | None,
     facc: float,
+    n_workers: int,
+    queue_size: int,
     progress: bool,
     collect_posterior: bool,
 ) -> tuple[dict[str, Any], np.ndarray | None]:
     """Run one static Dynesty rwalk calculation."""
     import dynesty
     from dynesty import utils as dyfunc
-    import time
     from dynesty.pool import Pool
-
-    n_workers = 24
 
     sampler_kwargs: dict[str, Any] = {
         "nlive": nlive,
@@ -461,50 +475,36 @@ def run_dynesty(
         sampler_kwargs["walks"] = walks
 
     start = time.perf_counter()
-
-    with Pool(
-        n_workers,
-        model.log_likelihood,
-        model.prior_transform,
-    ) as pool:
-
+    if n_workers == 1:
         sampler = dynesty.NestedSampler(
-            pool.loglike,
-            pool.prior_transform,
+            model.log_likelihood,
+            model.prior_transform,
             model.ndim,
-            pool=pool,
-            queue_size=n_workers,
             **sampler_kwargs,
         )
+        sampler.run_nested(dlogz=dlogz, print_progress=progress)
+    else:
+        with Pool(
+            n_workers,
+            model.log_likelihood,
+            model.prior_transform,
+        ) as pool:
+            sampler = dynesty.NestedSampler(
+                pool.loglike,
+                pool.prior_transform,
+                model.ndim,
+                pool=pool,
+                queue_size=queue_size,
+                **sampler_kwargs,
+            )
+            sampler.run_nested(dlogz=dlogz, print_progress=progress)
 
-        sampler.run_nested()
-
-    results = sampler.results
-    elapsed = time.perf_counter() - start
-    # sampler_kwargs: dict[str, Any] = {
-    #     "nlive": nlive,
-    #     "sample": "rwalk",
-    #     "bound": bound,
-    #     "rstate": np.random.default_rng(seed),
-    #     "facc": facc,
-    # }
-    # if walks is not None:
-    #     sampler_kwargs["walks"] = walks
-
-    # start = time.perf_counter()
-    # sampler = dynesty.NestedSampler(
-    #     model.log_likelihood,
-    #     model.prior_transform,
-    #     model.ndim,
-    #     **sampler_kwargs,
-    # )
-    # sampler.run_nested(dlogz=dlogz, print_progress=progress)
     runtime_s = time.perf_counter() - start
     result = sampler.results
 
     logz = float(np.asarray(result.logz)[-1])
     logzerr = float(np.asarray(result.logzerr)[-1])
-    information = float(np.asarray(result.information)[-1])
+    information_post_prior = float(np.asarray(result.information)[-1])
     ncall = int(np.sum(np.asarray(result.ncall, dtype=np.int64)))
     niter = int(getattr(result, "niter", len(result.logl)))
 
@@ -525,7 +525,7 @@ def run_dynesty(
     statistics = {
         "logz": logz,
         "logzerr": logzerr,
-        "information": information,
+        "information_post_prior": information_post_prior,
         "ncall": ncall,
         "niter": niter,
         "runtime_s": runtime_s,
@@ -600,6 +600,41 @@ def fit_morph_proposal(
     return proposal, fit_time_s
 
 
+def nismo_posterior_prior_information(result: Any) -> float:
+    """Compute ``KL(posterior || prior)`` from a NISMO weighted posterior.
+
+    NISMO's native ``result.information`` is based on its nested
+    pseudo-likelihood and therefore measures posterior versus the fixed
+    importance distribution.  Bayesian posterior-versus-prior information is
+
+        E_posterior[log likelihood] - log evidence.
+
+    Dead points precede final live points in ``result.log_posterior_weights``.
+    """
+    log_likelihood = np.concatenate(
+        (
+            np.asarray(result.dead_log_likelihood, dtype=float),
+            np.asarray(result.final_live_log_likelihood, dtype=float),
+        )
+    )
+    weights = np.asarray(result.posterior_weights, dtype=float)
+    if weights.shape != log_likelihood.shape:
+        raise ValueError("NISMO posterior weights and log likelihoods do not align")
+    if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
+        raise ValueError("NISMO posterior weights must be finite and non-negative")
+    if not np.isclose(np.sum(weights), 1.0, rtol=0.0, atol=1.0e-10):
+        raise ValueError("NISMO posterior weights are not normalized")
+    positive = weights > 0.0
+    if np.any(~np.isfinite(log_likelihood[positive])):
+        raise ValueError("positive-weight NISMO samples have non-finite likelihoods")
+    information = float(
+        np.sum(weights[positive] * (log_likelihood[positive] - float(result.logz)))
+    )
+    if information < -1.0e-10:
+        raise ValueError("materially negative NISMO posterior-versus-prior information")
+    return max(0.0, information)
+
+
 def run_nismo(
     *,
     nismo_model: Any,
@@ -615,9 +650,10 @@ def run_nismo(
     ensemble_de_weight: float,
     ensemble_stretch_weight: float,
     ensemble_gaussian_weight: float,
-    rwalk_walks: int | None,
-    rwalk_facc: float,
     srwalk_steps: int,
+    mor_rwalk_proposals: int,
+    n_workers: int,
+    queue_size: int,
     max_iterations: int,
     max_proposals_per_replacement: int,
     max_likelihood_calls: int | None,
@@ -628,9 +664,8 @@ def run_nismo(
     from nismo import (
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
+        MORWalkSettings,
         NISMOSampler,
-        ParallelSettings,
-        RWalkSettings,
         SRWalkSettings,
     )
 
@@ -642,6 +677,8 @@ def run_nismo(
         "rng": seed,
         "proposal_batch_size": proposal_batch_size,
         "tie_policy": tie_policy,
+        "n_workers": n_workers,
+        "queue_size": queue_size,
     }
 
     if proposal_scheme == "en-rwalk":
@@ -654,19 +691,18 @@ def run_nismo(
                 gaussian=ensemble_gaussian_weight,
             ),
         )
-    elif proposal_scheme == "rwalk":
-        sampler_kwargs["rwalk_settings"] = RWalkSettings(
-            walks=rwalk_walks,
-            facc=rwalk_facc,
-        )
-    elif proposal_scheme == "s-rwalk":
+    elif proposal_scheme in ("s-rwalk", "mor-rwalk"):
         sampler_kwargs["srwalk_settings"] = SRWalkSettings(
             n_steps=srwalk_steps,
+            dynamic_steps=True
         )
+        if proposal_scheme == "mor-rwalk":
+            sampler_kwargs["mor_rwalk_settings"] = MORWalkSettings(
+                n_proposals=mor_rwalk_proposals,
+            )
 
     sampler = NISMOSampler(**sampler_kwargs)
     start = time.perf_counter()
-    parallel = ParallelSettings(n_workers=24)
     result = sampler.run(
         dlogz=dlogz,
         max_iterations=max_iterations,
@@ -676,11 +712,13 @@ def run_nismo(
         progress=progress,
     )
     runtime_s = time.perf_counter() - start
+    information_post_prior = nismo_posterior_prior_information(result)
 
     return {
         "logz": float(result.logz),
         "logzerr": float(result.logzerr),
-        "information": float(result.information),
+        "information_post_prior": information_post_prior,
+        "information_post_importance": float(result.information),
         "ncall": int(result.n_likelihood_calls),
         "niter": int(result.niter),
         "nproposals": int(result.n_proposals),
@@ -694,18 +732,30 @@ def run_nismo(
 def information_from_row(row: dict[str, str]) -> tuple[float, bool]:
     """Return posterior-vs-prior information H in nats for one saved row.
 
-    New runs store the sampler's native information value directly.  Legacy
-    raw CSV files created before that field existed can still be replotted by
-    using the standard static nested-sampling relation
+    New runs store the definition explicitly in ``information_post_prior``.
+    Dynesty's native information has this same definition, so legacy Dynesty
+    rows may use their old ``information`` value or, if absent, the standard
+    static nested-sampling relation
 
         sigma(log Z) ~= sqrt(H / nlive),
 
-    i.e. H ~= nlive * logzerr**2.  The boolean return value is True only for
-    this legacy inference so summaries can report how many points were inferred.
+    i.e. H ~= nlive * logzerr**2. Legacy NISMO ``information`` and ``logzerr``
+    are deliberately not reused: they describe posterior versus the importance
+    distribution and cannot recover posterior-versus-prior information from
+    the aggregate CSV alone. The boolean is True only for a Dynesty logzerr
+    inference.
     """
-    stored = finite_float(row.get("information"))
+    stored = finite_float(row.get("information_post_prior"))
     if math.isfinite(stored):
         return stored, False
+
+    method = str(row.get("method", ""))
+    if method != "dynesty_rwalk":
+        return math.nan, False
+
+    legacy_stored = finite_float(row.get("information"))
+    if math.isfinite(legacy_stored):
+        return legacy_stored, False
 
     nlive = integer_or_zero(row.get("nlive"))
     logzerr = finite_float(row.get("logzerr"))
@@ -751,9 +801,7 @@ def summarize_rows(
         if repeat < 0 or repeat >= repeats:
             continue
         status = row.get("status")
-        if status != "success" and not (
-            include_incomplete and status == "incomplete"
-        ):
+        if status != "success" and not (include_incomplete and status == "incomplete"):
             continue
         logz = finite_float(row.get("logz"))
         ncall_value = finite_float(row.get(ncall_field))
@@ -838,12 +886,14 @@ def summarize_rows(
                 "logz_q16": float(np.quantile(logz, 0.16)),
                 "logz_q84": float(np.quantile(logz, 0.84)),
                 "logzerr_mean": float(np.nanmean(logzerr)),
-                "information_n": int(len(information)),
-                "information_inferred_n": int(information_inferred_n),
-                "information_mean": (
+                "post_prior_information_n": len(information),
+                "post_prior_information_dynesty_inferred_n": int(
+                    information_inferred_n
+                ),
+                "post_prior_information_mean": (
                     float(np.mean(information)) if len(information) else math.nan
                 ),
-                "information_std": (
+                "post_prior_information_std": (
                     sample_standard_deviation(information)
                     if len(information)
                     else math.nan
@@ -883,10 +933,10 @@ def summarize_rows(
         "logz_q16",
         "logz_q84",
         "logzerr_mean",
-        "information_n",
-        "information_inferred_n",
-        "information_mean",
-        "information_std",
+        "post_prior_information_n",
+        "post_prior_information_dynesty_inferred_n",
+        "post_prior_information_mean",
+        "post_prior_information_std",
         "bias",
         "mean_abs_error",
         "rmse",
@@ -1025,20 +1075,6 @@ def plot_summary(
     if logarithmic_ncall_axis:
         axis_calls.set_yscale("log")
 
-    metric_note = {
-        "direct": "direct sampler calls",
-        "amortized": "calls incl. amortized Morph training",
-        "cold-start": "calls incl. full Morph training",
-    }[ncall_metric]
-    # axis_calls.text(
-    #     0.015,
-    #     0.06,
-    #     metric_note,
-    #     transform=axis_calls.transAxes,
-    #     fontsize=8,
-    #     va="bottom",
-    # )
-
     for axis in (axis_logz, axis_calls):
         axis.grid(True, which="major", linestyle=":", alpha=0.35)
         axis.minorticks_on()
@@ -1064,14 +1100,14 @@ def plot_information(
     output_dir: Path,
     show: bool,
 ) -> tuple[Path, Path] | None:
-    """Plot posterior-vs-prior information H = KL(posterior || prior)."""
+    """Plot Bayesian information ``KL(posterior || prior)`` for both samplers."""
     import matplotlib.pyplot as plt
 
     usable = [
         row
         for row in summaries
-        if int(row.get("information_n", 0)) > 0
-        and math.isfinite(finite_float(row.get("information_mean")))
+        if int(row.get("post_prior_information_n", 0)) > 0
+        and math.isfinite(finite_float(row.get("post_prior_information_mean")))
     ]
     if not usable:
         print("No finite posterior|prior information values are available to plot.")
@@ -1096,8 +1132,12 @@ def plot_information(
             key=lambda row: int(row["nlive"]),
         )
         x = np.asarray([row["nlive"] for row in group], dtype=float)
-        mean = np.asarray([row["information_mean"] for row in group], dtype=float)
-        std = np.asarray([row["information_std"] for row in group], dtype=float)
+        mean = np.asarray(
+            [row["post_prior_information_mean"] for row in group], dtype=float
+        )
+        std = np.asarray(
+            [row["post_prior_information_std"] for row in group], dtype=float
+        )
         std = np.where(np.isfinite(std), std, 0.0)
 
         style = styles.get(
@@ -1132,9 +1172,7 @@ def plot_information(
 
     axis.set_xlabel(r"$n_{\rm live}$")
     axis.set_ylabel(
-        # r"Information $H=D_{\rm KL}(p(\theta\mid D)\Vert\pi(\theta))$ [nats]"
-        r"Information $(H)$ [nats]"
-
+        r"$H_{\rm post\mid prior}=D_{\rm KL}(p(\theta\mid d)\Vert\pi(\theta))$ [nats]"
     )
     axis.grid(True, which="major", linestyle=":", alpha=0.35)
     axis.minorticks_on()
@@ -1152,7 +1190,6 @@ def plot_information(
     return png_path, pdf_path
 
 
-
 def plot_information_from_rows(
     *,
     rows: dict[tuple[str, int, int], dict[str, str]],
@@ -1165,21 +1202,20 @@ def plot_information_from_rows(
 
     This path is intentionally independent of the evidence/call-count summary.
     It therefore still works when a partial run has a usable information value
-    (or a legacy logzerr from which H can be inferred) but lacks some call-count
+    (or a legacy Dynesty logzerr from which H can be inferred) but lacks a call-count
     field needed by the main benchmark summary.
 
-    New rows use the sampler-native ``information`` value. Legacy rows that
-    predate that column fall back to ``H ~= nlive * logzerr**2`` and are marked
-    as inferred in ``information_summary.csv``.
+    New rows use the explicit ``information_post_prior`` value. Legacy Dynesty
+    rows may fall back to their native ``information`` or to
+    ``H ~= nlive * logzerr**2``. Legacy NISMO aggregate rows are excluded because
+    their old information and logzerr describe posterior versus importance.
     """
     import matplotlib.pyplot as plt
 
     grouped: dict[tuple[str, int], list[tuple[float, bool, str]]] = {}
     for row in rows.values():
         status = str(row.get("status", ""))
-        if status == "success":
-            pass
-        elif include_incomplete and status == "incomplete":
+        if status == "success" or (include_incomplete and status == "incomplete"):
             pass
         else:
             continue
@@ -1202,8 +1238,8 @@ def plot_information_from_rows(
     if not grouped:
         raise RuntimeError(
             "No posterior|prior information values could be recovered from raw_runs.csv. "
-            "For legacy runs this requires a finite logzerr; new runs store the "
-            "native information value directly."
+            "New runs store information_post_prior directly; legacy NISMO rows "
+            "cannot be converted without their weighted sample arrays."
         )
 
     information_rows: list[dict[str, Any]] = []
@@ -1219,10 +1255,10 @@ def plot_information_from_rows(
                 "method_label": values[0][2],
                 "nlive": nlive,
                 "n_used": len(values),
-                "n_native": len(values) - n_inferred,
-                "n_inferred": n_inferred,
-                "information_mean": float(np.mean(arr)),
-                "information_std": sample_standard_deviation(arr),
+                "n_direct": len(values) - n_inferred,
+                "n_dynesty_inferred": n_inferred,
+                "post_prior_information_mean": float(np.mean(arr)),
+                "post_prior_information_std": sample_standard_deviation(arr),
             }
         )
 
@@ -1235,10 +1271,10 @@ def plot_information_from_rows(
                 "method_label",
                 "nlive",
                 "n_used",
-                "n_native",
-                "n_inferred",
-                "information_mean",
-                "information_std",
+                "n_direct",
+                "n_dynesty_inferred",
+                "post_prior_information_mean",
+                "post_prior_information_std",
             ),
         )
         writer.writeheader()
@@ -1259,8 +1295,12 @@ def plot_information_from_rows(
             key=lambda row: int(row["nlive"]),
         )
         x = np.asarray([row["nlive"] for row in group], dtype=float)
-        mean = np.asarray([row["information_mean"] for row in group], dtype=float)
-        std = np.asarray([row["information_std"] for row in group], dtype=float)
+        mean = np.asarray(
+            [row["post_prior_information_mean"] for row in group], dtype=float
+        )
+        std = np.asarray(
+            [row["post_prior_information_std"] for row in group], dtype=float
+        )
         std = np.where(np.isfinite(std), std, 0.0)
 
         style = styles.get(
@@ -1273,21 +1313,31 @@ def plot_information_from_rows(
         )
         label = str(group[0]["method_label"])
         axis.fill_between(
-            x, np.maximum(0.0, mean - std), mean + std,
-            color=style["color"], alpha=0.12, linewidth=0,
+            x,
+            np.maximum(0.0, mean - std),
+            mean + std,
+            color=style["color"],
+            alpha=0.12,
+            linewidth=0,
         )
         axis.errorbar(
-            x, mean, yerr=std, label=label,
-            color=style["color"], marker=style["marker"],
-            linestyle=style["linestyle"], linewidth=1.1,
-            markersize=4.5, capsize=3,
+            x,
+            mean,
+            yerr=std,
+            label=label,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.1,
+            markersize=4.5,
+            capsize=3,
         )
 
     axis.set_xlabel(r"$n_{\rm live}$")
-    # axis.set_ylabel(r"Information $H=D_{\rm KL}(p(\theta\mid D)\Vert\pi(\theta))$ [nats]")
-    axis.set_ylabel(r"Information $(H)$ [nats]")
+    axis.set_ylabel(
+        r"$H_{\rm post\mid prior}=D_{\rm KL}(p(\theta\mid d)\Vert\pi(\theta))$ [nats]"
+    )
 
-    
     axis.grid(True, which="major", linestyle=":", alpha=0.35)
     axis.minorticks_on()
     axis.tick_params(direction="in", top=True, right=True)
@@ -1303,15 +1353,19 @@ def plot_information_from_rows(
         plt.close(fig)
 
     if not png_path.exists() or not pdf_path.exists():
-        raise RuntimeError("Information plot generation completed but output files are missing")
+        raise RuntimeError(
+            "Information plot generation completed but output files are missing"
+        )
 
-    n_native = sum(int(row["n_native"]) for row in information_rows)
-    n_inferred = sum(int(row["n_inferred"]) for row in information_rows)
+    n_direct = sum(int(row["n_direct"]) for row in information_rows)
+    n_inferred = sum(int(row["n_dynesty_inferred"]) for row in information_rows)
     print(
-        f"Information rows used: native={n_native}, legacy-inferred={n_inferred}. "
+        f"Information rows used: direct={n_direct}, "
+        f"legacy-Dynesty-inferred={n_inferred}. "
         f"Summary: {info_summary_path}"
     )
     return png_path, pdf_path
+
 
 def print_summary(summaries: list[dict[str, Any]]) -> None:
     if not summaries:
@@ -1436,7 +1490,9 @@ def infer_replot_true_logz(
         value = finite_float(row.get("true_logz"))
         if math.isfinite(value):
             return value
-    raise RuntimeError("Could not infer true_logz from benchmark_config.json or raw_runs.csv")
+    raise RuntimeError(
+        "Could not infer true_logz from benchmark_config.json or raw_runs.csv"
+    )
 
 
 _PRESENTATION_ARGUMENTS = frozenset(
@@ -1528,6 +1584,12 @@ def save_config(
             "logz_error_bars": "Empirical sample standard deviation across repeats.",
             "ncall_error_bars": "Empirical sample standard deviation across repeats.",
             "ncall_default": args.ncall_metric,
+            "information_plot": (
+                "For both samplers, H = KL(posterior || prior) = "
+                "E_posterior[log likelihood] - log evidence. Dynesty supplies "
+                "this natively; NISMO is recomputed from its normalized weighted "
+                "posterior and saved log-likelihood arrays."
+            ),
         },
     }
     path = output_dir / "benchmark_config.json"
@@ -1611,10 +1673,25 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--training-thin must be at least one")
     if args.max_training_samples < 0:
         raise ValueError("--max-training-samples cannot be negative")
+    if args.n_workers < 1:
+        raise ValueError("--n-workers must be at least one")
+    if args.queue_size is not None and args.queue_size < 1:
+        raise ValueError("--queue-size must be at least one")
+    if args.n_workers == 1 and resolved_queue_size(args) > 1:
+        raise ValueError("--queue-size > 1 requires --n-workers > 1")
+    if args.nismo_srwalk_steps < 1:
+        raise ValueError("--nismo-srwalk-steps must be at least one")
+    if args.mor_rwalk_proposals < 1:
+        raise ValueError("--mor-rwalk-proposals must be at least one")
     if args.nismo_proposal_scheme == "en-rwalk" and any(
         value < args.ensemble_walkers for value in args.nlive
     ):
         raise ValueError("each nlive must be at least --ensemble-walkers for en-rwalk")
+
+
+def resolved_queue_size(args: argparse.Namespace) -> int:
+    """Resolve the shared Dynesty/NISMO queue depth."""
+    return args.n_workers if args.queue_size is None else args.queue_size
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1659,6 +1736,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.1,
         help="Common stopping tolerance passed to both samplers.",
     )
+    parser.add_argument(
+        "--n-workers",
+        type=int,
+        default=24,
+        help="Complete-replacement process count used by both samplers.",
+    )
+    parser.add_argument(
+        "--queue-size",
+        type=int,
+        default=None,
+        help="FIFO prefetch depth for both samplers; defaults to n_workers.",
+    )
 
     parser.add_argument(
         "--dynesty-bound",
@@ -1696,7 +1785,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--nismo-proposal-scheme",
-        choices=("fixed_morph", "adaptive_morph", "rwalk", "s-rwalk", "en-rwalk"),
+        choices=(
+            "fixed_morph",
+            "adaptive_morph",
+            "mor-rwalk",
+            "s-rwalk",
+            "en-rwalk",
+        ),
         default="s-rwalk",
         help="NISMO constrained replacement scheme.",
     )
@@ -1712,9 +1807,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ensemble-de-weight", type=float, default=0.70)
     parser.add_argument("--ensemble-stretch-weight", type=float, default=0.15)
     parser.add_argument("--ensemble-gaussian-weight", type=float, default=0.15)
-    parser.add_argument("--nismo-rwalk-walks", type=int, default=None)
-    parser.add_argument("--nismo-rwalk-facc", type=float, default=0.5)
     parser.add_argument("--nismo-srwalk-steps", type=int, default=25)
+    parser.add_argument("--mor-rwalk-proposals", type=int, default=30_000)
     parser.add_argument("--max-iterations", type=int, default=10_000)
     parser.add_argument(
         "--max-proposals-per-replacement",
@@ -1861,7 +1955,9 @@ def main() -> int:
                 f"Saved information plots: {information_paths[0]} and "
                 f"{information_paths[1]}"
             )
-            print(f"Saved information summary: {output_dir / 'information_summary.csv'}")
+            print(
+                f"Saved information summary: {output_dir / 'information_summary.csv'}"
+            )
         return 0
 
     validate_args(args)
@@ -1983,6 +2079,8 @@ def main() -> int:
                     bound=args.dynesty_bound,
                     walks=args.dynesty_walks,
                     facc=args.dynesty_facc,
+                    n_workers=args.n_workers,
+                    queue_size=resolved_queue_size(args),
                     progress=args.progress,
                     collect_posterior=True,
                 )
@@ -1994,7 +2092,7 @@ def main() -> int:
                     seed=pilot_seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
-                    information=statistics["information"],
+                    information_post_prior=statistics["information_post_prior"],
                     true_logz=true_logz,
                     ncall_direct=statistics["ncall"],
                     ncall_training=0,
@@ -2021,7 +2119,7 @@ def main() -> int:
                     f"{statistics['logzerr']:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
-            except BaseException as error:
+            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
                 failure = make_failure_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -2062,6 +2160,8 @@ def main() -> int:
                     bound=args.dynesty_bound,
                     walks=args.dynesty_walks,
                     facc=args.dynesty_facc,
+                    n_workers=args.n_workers,
+                    queue_size=resolved_queue_size(args),
                     progress=args.progress,
                     collect_posterior=False,
                 )
@@ -2073,7 +2173,7 @@ def main() -> int:
                     seed=seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
-                    information=statistics["information"],
+                    information_post_prior=statistics["information_post_prior"],
                     true_logz=true_logz,
                     ncall_direct=statistics["ncall"],
                     ncall_training=0,
@@ -2090,7 +2190,7 @@ def main() -> int:
                     f"{statistics['logzerr']:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
-            except BaseException as error:
+            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
                 failure = make_failure_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -2156,7 +2256,7 @@ def main() -> int:
                 top_k_greedy=args.top_k_greedy,
             )
             print(f"  Morph fit completed in {proposal_fit_time_s:.1f} s")
-        except BaseException as error:
+        except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
             reason = "".join(
                 traceback.format_exception_only(type(error), error)
             ).strip()
@@ -2214,9 +2314,10 @@ def main() -> int:
                     ensemble_de_weight=args.ensemble_de_weight,
                     ensemble_stretch_weight=args.ensemble_stretch_weight,
                     ensemble_gaussian_weight=args.ensemble_gaussian_weight,
-                    rwalk_walks=args.nismo_rwalk_walks,
-                    rwalk_facc=args.nismo_rwalk_facc,
                     srwalk_steps=args.nismo_srwalk_steps,
+                    mor_rwalk_proposals=args.mor_rwalk_proposals,
+                    n_workers=args.n_workers,
+                    queue_size=resolved_queue_size(args),
                     max_iterations=args.max_iterations,
                     max_proposals_per_replacement=(args.max_proposals_per_replacement),
                     max_likelihood_calls=args.max_likelihood_calls,
@@ -2234,7 +2335,10 @@ def main() -> int:
                     seed=seed,
                     logz=statistics["logz"],
                     logzerr=statistics["logzerr"],
-                    information=statistics["information"],
+                    information_post_prior=statistics["information_post_prior"],
+                    information_post_importance=statistics[
+                        "information_post_importance"
+                    ],
                     true_logz=true_logz,
                     ncall_direct=direct,
                     ncall_training=pilot_ncall,
@@ -2264,7 +2368,7 @@ def main() -> int:
                         "aggregate statistics.",
                         file=sys.stderr,
                     )
-            except BaseException as error:
+            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
                 failure = make_failure_row(
                     method=nismo_method,
                     method_label=nismo_label,

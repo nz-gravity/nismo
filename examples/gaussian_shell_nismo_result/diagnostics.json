@@ -1,0 +1,200 @@
+{
+  "config": {
+    "dlogz": 0.01,
+    "ensemble_rwalk_settings": {
+      "covariance_jitter": 1e-10,
+      "covariance_shrinkage": 0.1,
+      "gamma": null,
+      "gaussian_scale": null,
+      "jitter_scale": 1e-06,
+      "move_weights": {
+        "de": 0.6,
+        "gaussian": 0.15,
+        "stretch": 0.25
+      },
+      "n_sweeps": 4,
+      "n_walkers": 8,
+      "stretch_scale": 1.5
+    },
+    "max_iterations": 10000,
+    "max_likelihood_calls": null,
+    "max_proposals_per_replacement": 100000,
+    "max_wall_time": null,
+    "mor_rwalk_settings": {
+      "n_proposals": 10000
+    },
+    "n_live": 20,
+    "parallel": {
+      "n_workers": 1,
+      "queue_size": 1
+    },
+    "proposal_batch_size": 64,
+    "proposal_scheme": "mor-rwalk",
+    "proposal_update_interval": 25,
+    "rwalk_settings": {
+      "facc": 0.5,
+      "ncdim": null,
+      "walks": null
+    },
+    "srwalk_settings": {
+      "acceptance_window": 20,
+      "covariance_jitter": 1e-10,
+      "covariance_rebuild_interval": null,
+      "covariance_shrinkage": 0.25,
+      "covariance_update_interval": 1,
+      "dynamic_steps": true,
+      "facc": 0.5,
+      "max_step_growth": 2.0,
+      "max_steps": 5000,
+      "n_steps": 75,
+      "profile": false,
+      "scale": null,
+      "target_zero_move_probability": 0.001,
+      "zero_accept_scale_factor": 0.5,
+      "zero_move_policy": "allow"
+    },
+    "stopping": {
+      "consecutive": 1,
+      "criteria": [
+        {
+          "name": "remaining_dlogz",
+          "tolerance": 0.01
+        }
+      ],
+      "min_iterations": 0,
+      "mode": "all",
+      "stability_window": 10
+    },
+    "tie_policy": "strict"
+  },
+  "ensemble_move_totals": null,
+  "files": {
+    "diagnostics": "diagnostics.json",
+    "plots": [
+      "run_diagnostics.png",
+      "nested_progress.png",
+      "weight_health.png"
+    ],
+    "run_history": "run_history.npz",
+    "weighted_samples": "weighted_samples.npz"
+  },
+  "nonfinite_counts": {
+    "outside_prior": 3,
+    "zero_likelihood": 0
+  },
+  "proposal_updates": [],
+  "queue_diagnostics": {
+    "compute_efficiency": 1.0,
+    "prefetch_likelihood_calls": 18065,
+    "queue_candidates_consumed": 233,
+    "queue_candidates_invalidated": 0,
+    "queue_candidates_stale": 0,
+    "queue_efficiency": 1.0,
+    "queue_jobs_completed": 233,
+    "queue_jobs_submitted": 233,
+    "queue_refills": 233,
+    "used_prefetch_likelihood_calls": 18065,
+    "wasted_prefetch_likelihood_calls": 0
+  },
+  "reproducibility": {
+    "importance_morph_description": "MorphMetadata(n_training=4553, ndim=60, parameter_names=('x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29', 'x30', 'x31', 'x32', 'x33', 'x34', 'x35', 'x36', 'x37', 'x38', 'x39', 'x40', 'x41', 'x42', 'x43', 'x44', 'x45', 'x46', 'x47', 'x48', 'x49', 'x50', 'x51', 'x52', 'x53', 'x54', 'x55', 'x56', 'x57', 'x58', 'x59'), kde_bw=\"'silverman'\", min_tc=None, top_k_greedy=1, group_source='automatic:2_group', selected_groups=(('x42', 'x8'), ('x11', 'x56'), ('x18', 'x4'), ('x23', 'x7'), ('x36', 'x46'), ('x47', 'x9'), ('x1', 'x53'), ('x16', 'x39'), ('x13', 'x5'), ('x35', 'x57'), ('x38', 'x59'), ('x22', 'x54'), ('x24', 'x6'), ('x25', 'x49'), ('x19', 'x45'), ('x30', 'x37'), ('x3', 'x58'), ('x29', 'x52'), ('x14', 'x55'), ('x20', 'x34'), ('x12', 'x51'), ('x33', 'x48'), ('x10', 'x50'), ('x15', 'x17'), ('x28', 'x40'), ('x26', 'x32'), ('x2', 'x31'), ('x21', 'x44'), ('x27', 'x41'), ('x0', 'x43')), single_parameters=(), morphz_version='0.4.2.dev6', rng_note='NISMO derives an integer seed from its Generator for each MorphZ resample call; MorphZ 0.4.1 restores legacy global RNG state.')",
+    "rng_bit_generator": "PCG64",
+    "rng_state_final": "{'bit_generator': 'PCG64', 'state': {'state': 26662928650907727281511683543174511728, 'inc': 107381791681050441119675421997145146149}, 'has_uint32': 0, 'uinteger': 1983842150}",
+    "rng_state_initial": "{'bit_generator': 'PCG64', 'state': {'state': 29299324949094424543410418505067287561, 'inc': 107381791681050441119675421997145146149}, 'has_uint32': 0, 'uinteger': 0}"
+  },
+  "result": {
+    "information": 3.1785742791394473,
+    "logz": -140.3824105879489,
+    "logzerr": 0.3986586433993027,
+    "n_likelihood_calls": 28065,
+    "n_prior_calls": 28068,
+    "n_proposals": 28048,
+    "ndim": 60,
+    "niter": 368,
+    "nlive": 20,
+    "parameter_names": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19",
+      "x20",
+      "x21",
+      "x22",
+      "x23",
+      "x24",
+      "x25",
+      "x26",
+      "x27",
+      "x28",
+      "x29",
+      "x30",
+      "x31",
+      "x32",
+      "x33",
+      "x34",
+      "x35",
+      "x36",
+      "x37",
+      "x38",
+      "x39",
+      "x40",
+      "x41",
+      "x42",
+      "x43",
+      "x44",
+      "x45",
+      "x46",
+      "x47",
+      "x48",
+      "x49",
+      "x50",
+      "x51",
+      "x52",
+      "x53",
+      "x54",
+      "x55",
+      "x56",
+      "x57",
+      "x58",
+      "x59"
+    ],
+    "success": true,
+    "termination_reason": "remaining_evidence"
+  },
+  "run_diagnostics": {
+    "compute_efficiency": 1.0,
+    "conservative_log_remaining": -143.6087880078549,
+    "final_live_ess": 11.616439597859618,
+    "final_live_logz_error": 0.001896839907342048,
+    "final_live_mean_rse": 0.19489510392883005,
+    "final_logz_stability": 0.001656673435633138,
+    "final_remaining_dlogz": 0.009780291101047032,
+    "final_remaining_fraction": 0.009732619594357374,
+    "final_stopping_streak": 1,
+    "maximum_proposals_per_replacement": 690,
+    "posterior_ess": 222.51549893586002,
+    "proposal_acceptance_fraction": 0.013120365088419851,
+    "queue_efficiency": 1.0,
+    "relative_posterior_ess": 0.5734935539584021,
+    "thresholds_monotone": true
+  },
+  "schema_version": 1,
+  "srwalk_diagnostics": null,
+  "warnings": []
+}
