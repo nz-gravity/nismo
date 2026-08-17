@@ -15,6 +15,7 @@ from nismo import (
     ParallelSettings,
     SRWalkSettings,
 )
+from nismo.sampler import _get_seed_sequence
 
 pytestmark = pytest.mark.integration
 
@@ -51,6 +52,22 @@ class ConstantUniformModel(ConstantNormalModel):
         theta: NDArray[np.float64],
     ) -> NDArray[np.float64]:
         return UniformProposal().log_prob(theta)
+
+
+def test_pool_seed_sequences_match_dynesty_rule() -> None:
+    actual_rng = np.random.default_rng(12345)
+    reference_rng = np.random.default_rng(12345)
+    actual = _get_seed_sequence(actual_rng, 4)
+    reference = np.random.SeedSequence(
+        reference_rng.integers(0, 2**63 - 1, size=4)
+    ).spawn(4)
+
+    for actual_seed, reference_seed in zip(actual, reference, strict=True):
+        np.testing.assert_array_equal(
+            actual_seed.generate_state(4),
+            reference_seed.generate_state(4),
+        )
+    assert actual_rng.integers(0, 2**63 - 1) == reference_rng.integers(0, 2**63 - 1)
 
 
 @pytest.mark.parametrize(
@@ -113,7 +130,7 @@ def test_parallel_replacement_jobs_are_reproducible_and_serially_consumed(
     )
 
 
-def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
+def test_parallel_queue_discards_stale_candidates_in_fifo_order() -> None:
     result = NISMOSampler(
         model=ConstantNormalModel(),
         importance_morph=StandardNormalProposal(),
@@ -122,7 +139,7 @@ def test_serial_queue_discards_stale_candidates_in_fifo_order() -> None:
         n_live=10,
         rng=88,
         tie_policy="randomized_plateau",
-        n_workers=1,
+        n_workers=2,
         queue_size=4,
     ).run(
         dlogz=0.5,
@@ -185,7 +202,7 @@ def test_parallel_srwalk_freezes_then_propagates_dynamic_epoch_length() -> None:
     )
 
     assert result.termination_reason == "max_iterations"
-    np.testing.assert_array_equal(result.history.mcmc_completed, [4, 8, 8])
+    np.testing.assert_array_equal(result.history.mcmc_completed, [4, 4, 8])
     np.testing.assert_array_equal(result.history.mcmc_accepted, [0, 0, 0])
     np.testing.assert_array_equal(result.history.mcmc_moved, [0, 0, 0])
 
@@ -244,7 +261,7 @@ def test_parallel_call_reservations_never_overshoot_hard_limit() -> None:
     assert result.termination_reason == "max_likelihood_calls"
     assert result.n_likelihood_calls == 22
     assert result.n_likelihood_calls <= 23
-    assert result.niter == 3
+    assert result.niter == 2
 
 
 def test_parallel_deadline_discards_prefetch_without_committing_late_result() -> None:
@@ -289,6 +306,15 @@ def test_direct_parallel_arguments_are_validated_and_stored() -> None:
             n_live=10,
             rng=92,
             n_workers=0,
+        )
+    with pytest.raises(ConfigurationError, match="requires n_workers > 1"):
+        NISMOSampler(
+            model=ConstantNormalModel(),
+            importance_morph=StandardNormalProposal(),
+            n_live=10,
+            rng=92,
+            n_workers=1,
+            queue_size=2,
         )
 
 

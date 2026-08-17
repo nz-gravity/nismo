@@ -18,15 +18,13 @@ from .config import NISMOConfig, TiePolicy
 from .constrained import (
     BatchEvaluator,
     ConstrainedAttempt,
+    EvaluatedPoint,
     draw_constrained,
     passes_constraint,
 )
 from .mcmc import (
-    RWalkSampler,
-    SRWalkSampler,
     draw_ensemble_rwalk_constrained,
-    draw_rwalk_constrained,
-    draw_srwalk_constrained,
+    evolve_srwalk_constrained,
 )
 from .model import Model
 from .proposals import Proposal
@@ -36,6 +34,36 @@ def _readonly_float(values: NDArray[np.float64]) -> NDArray[np.float64]:
     array = np.array(values, dtype=float, copy=True)
     array.setflags(write=False)
     return array
+
+
+@dataclass(frozen=True, slots=True)
+class ReplacementWorkerContext:
+    """Heavy immutable objects cached once in every replacement worker."""
+
+    config: NISMOConfig
+    model: Model
+    importance_morph: Proposal
+
+
+_WORKER_CONTEXT: ReplacementWorkerContext | None = None
+
+
+def initialize_replacement_worker(context: ReplacementWorkerContext) -> None:
+    """Install the run context in a spawned worker process.
+
+    This mirrors Dynesty's pool initializer: model and fixed-importance
+    objects cross the process boundary once, while map jobs contain only the
+    state that changes from one proposed replacement to the next.
+    """
+    global _WORKER_CONTEXT
+    _WORKER_CONTEXT = context
+
+
+def _replacement_worker_context() -> ReplacementWorkerContext:
+    context = _WORKER_CONTEXT
+    if context is None:
+        raise RuntimeError("replacement worker context was not initialized")
+    return context
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,20 +150,42 @@ class EvaluationCounts:
 
 @dataclass(frozen=True, slots=True)
 class ReplacementJob:
-    """Pickle-safe description of one complete replacement construction."""
+    """Generic replacement state not already cached in the worker."""
 
     job_id: int
     snapshot: ReplacementSnapshot
-    config: NISMOConfig
-    model: Model
-    importance_morph: Proposal
     proposal_morph: Proposal
-    seed_entropy: tuple[int, ...]
+    rseed: np.random.SeedSequence | np.random.Generator
     max_likelihood_calls: int | None
     deadline: float | None
-    rwalk_scale: float | None = None
-    srwalk_scale: float | None = None
-    srwalk_steps: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SRWalkTask:
+    """Dynesty-style frozen start and axes for one complete ``s-rwalk``."""
+
+    job_id: int
+    starting: EvaluatedPoint
+    threshold: float
+    threshold_tie_breaker: float
+    proposal_revision: int
+    proposal_factor: NDArray[np.float64]
+    scale: float
+    n_steps: int
+    rseed: np.random.SeedSequence | np.random.Generator
+    max_likelihood_calls: int | None
+    deadline: float | None
+
+    def __post_init__(self) -> None:
+        if self.proposal_revision < 0:
+            raise ValueError("proposal_revision must be non-negative")
+        if self.n_steps < 1:
+            raise ValueError("s-rwalk task n_steps must be positive")
+        factor = _readonly_float(self.proposal_factor)
+        ndim = len(self.starting.theta)
+        if factor.shape != (ndim, ndim):
+            raise ValueError("s-rwalk task factor has the wrong shape")
+        object.__setattr__(self, "proposal_factor", factor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,17 +360,18 @@ def prepare_replacement_snapshot(
 
 def build_replacement(job: ReplacementJob) -> ReplacementResult:
     """Construct one complete replacement without mutating coordinator state."""
-    rng = np.random.default_rng(np.random.SeedSequence(job.seed_entropy))
+    context = _replacement_worker_context()
+    rng = np.random.default_rng(job.rseed)
     evaluator = BatchEvaluator(
-        job.model,
-        job.importance_morph,
+        context.model,
+        context.importance_morph,
         profile=(
-            job.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
-            and job.config.srwalk_settings.profile
+            context.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
+            and context.config.srwalk_settings.profile
         ),
     )
     snapshot = job.snapshot
-    config = job.config
+    config = context.config
     proposal_scale: float | None = None
 
     if config.proposal_scheme in ("fixed_morph", "adaptive_morph"):
@@ -335,62 +386,6 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
             max_proposals=config.max_proposals_per_replacement,
             max_likelihood_calls=job.max_likelihood_calls,
             deadline=job.deadline,
-        )
-    elif config.proposal_scheme == "rwalk":
-        rwalk_controller = RWalkSampler(
-            settings=config.rwalk_settings,
-            ndim=job.model.ndim,
-        )
-        if job.rwalk_scale is not None:
-            rwalk_controller.scale = job.rwalk_scale
-        proposal_scale = rwalk_controller.scale
-        attempt = draw_rwalk_constrained(
-            evaluator=evaluator,
-            live_theta=snapshot.live_theta,
-            live_log_likelihood=snapshot.live_log_likelihood,
-            live_log_prior=snapshot.live_log_prior,
-            live_log_q0=snapshot.live_log_q0,
-            live_log_psi0=snapshot.live_log_psi0,
-            live_tie_breakers=snapshot.live_tie_breakers,
-            worst=snapshot.worst,
-            threshold=snapshot.threshold,
-            threshold_tie_breaker=snapshot.threshold_tie_breaker,
-            tie_policy=config.tie_policy,
-            sampler=rwalk_controller,
-            rng=rng,
-            max_proposals=config.max_proposals_per_replacement,
-            max_likelihood_calls=job.max_likelihood_calls,
-            deadline=job.deadline,
-        )
-    elif config.proposal_scheme in ("s-rwalk", "mor-rwalk"):
-        srwalk_controller = SRWalkSampler(
-            settings=config.srwalk_settings,
-            ndim=job.model.ndim,
-            step_limit=config.max_proposals_per_replacement,
-        )
-        if job.srwalk_scale is not None:
-            srwalk_controller.scale = job.srwalk_scale
-        if job.srwalk_steps is not None:
-            srwalk_controller.n_steps = job.srwalk_steps
-        proposal_scale = srwalk_controller.scale
-        attempt = draw_srwalk_constrained(
-            evaluator=evaluator,
-            live_theta=snapshot.live_theta,
-            live_log_likelihood=snapshot.live_log_likelihood,
-            live_log_prior=snapshot.live_log_prior,
-            live_log_q0=snapshot.live_log_q0,
-            live_log_psi0=snapshot.live_log_psi0,
-            live_tie_breakers=snapshot.live_tie_breakers,
-            worst=snapshot.worst,
-            threshold=snapshot.threshold,
-            threshold_tie_breaker=snapshot.threshold_tie_breaker,
-            tie_policy=config.tie_policy,
-            sampler=srwalk_controller,
-            rng=rng,
-            max_proposals=config.max_proposals_per_replacement,
-            max_likelihood_calls=job.max_likelihood_calls,
-            deadline=job.deadline,
-            proposal_factor=snapshot.srwalk_factor,
         )
     elif config.proposal_scheme == "en-rwalk":
         attempt = draw_ensemble_rwalk_constrained(
@@ -422,4 +417,40 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
         proposal_revision=snapshot.proposal_revision,
         counts=EvaluationCounts.from_evaluator(evaluator),
         proposal_scale=proposal_scale,
+    )
+
+
+def build_srwalk_replacement(task: SRWalkTask) -> ReplacementResult:
+    """Evolve one coordinator-prepared ``s-rwalk`` start in a worker."""
+    context = _replacement_worker_context()
+    config = context.config
+    rng = np.random.default_rng(task.rseed)
+    evaluator = BatchEvaluator(
+        context.model,
+        context.importance_morph,
+        profile=config.srwalk_settings.profile,
+    )
+    attempt = evolve_srwalk_constrained(
+        evaluator=evaluator,
+        starting=task.starting,
+        threshold=task.threshold,
+        threshold_tie_breaker=task.threshold_tie_breaker,
+        tie_policy=config.tie_policy,
+        proposal_factor=task.proposal_factor,
+        scale=task.scale,
+        n_steps=task.n_steps,
+        zero_move_policy=config.srwalk_settings.zero_move_policy,
+        max_proposals=config.max_proposals_per_replacement,
+        max_likelihood_calls=task.max_likelihood_calls,
+        deadline=task.deadline,
+        rng=rng,
+    )
+    return ReplacementResult(
+        job_id=task.job_id,
+        attempt=attempt,
+        threshold_at_creation=task.threshold,
+        threshold_tie_breaker_at_creation=task.threshold_tie_breaker,
+        proposal_revision=task.proposal_revision,
+        counts=EvaluationCounts.from_evaluator(evaluator),
+        proposal_scale=task.scale,
     )

@@ -12,7 +12,7 @@ from nismo import (
     ReplacementSnapshot,
 )
 from nismo.constrained import ConstrainedAttempt, ConstrainedDraw, EvaluatedPoint
-from nismo.replacement import ReplacementQueue
+from nismo.replacement import ReplacementQueue, SRWalkTask
 
 pytestmark = pytest.mark.unit
 
@@ -49,6 +49,8 @@ def test_parallel_settings_resolve_defaults_and_validate_positive_integers() -> 
         ParallelSettings(n_workers=0)
     with pytest.raises(ConfigurationError, match="queue_size"):
         ParallelSettings(queue_size=0)
+    with pytest.raises(ConfigurationError, match="requires n_workers > 1"):
+        ParallelSettings(n_workers=1, queue_size=2)
 
 
 def test_replacement_snapshot_owns_read_only_copies() -> None:
@@ -78,6 +80,44 @@ def test_replacement_snapshot_owns_read_only_copies() -> None:
     np.testing.assert_array_equal(snapshot.srwalk_factor, np.eye(2))
     assert snapshot.srwalk_factor is not None
     assert not snapshot.srwalk_factor.flags.writeable
+
+
+def test_srwalk_task_contains_only_a_frozen_start_and_axes() -> None:
+    point = EvaluatedPoint(
+        theta=np.array([1.0, 2.0]),
+        log_likelihood=-1.0,
+        log_prior=-2.0,
+        log_q0=-2.0,
+        log_psi0=-1.0,
+        tie_breaker=0.25,
+    )
+    factor = np.eye(2)
+    task = SRWalkTask(
+        job_id=3,
+        starting=point,
+        threshold=-4.0,
+        threshold_tie_breaker=0.1,
+        proposal_revision=2,
+        proposal_factor=factor,
+        scale=0.5,
+        n_steps=8,
+        rseed=np.random.SeedSequence(123),
+        max_likelihood_calls=8,
+        deadline=None,
+    )
+    factor[:] = -1.0
+    np.testing.assert_array_equal(task.proposal_factor, np.eye(2))
+    assert not task.proposal_factor.flags.writeable
+    for forbidden in (
+        "snapshot",
+        "live_theta",
+        "model",
+        "importance_morph",
+        "proposal_morph",
+        "config",
+        "worst",
+    ):
+        assert not hasattr(task, forbidden)
 
 
 def test_replacement_queue_is_fifo_and_revalidates_threshold_and_revision() -> None:

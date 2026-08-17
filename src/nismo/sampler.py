@@ -7,7 +7,6 @@ import multiprocessing as mp
 import os
 import time
 from collections.abc import Mapping
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -21,7 +20,6 @@ from .config import (
     NISMOConfig,
     ParallelSettings,
     ProposalScheme,
-    RWalkSettings,
     SRWalkSettings,
     TiePolicy,
 )
@@ -38,12 +36,11 @@ from .constrained import (
 from .exceptions import ConfigurationError
 from .mcmc import (
     RWALK_CITATIONS,
-    RWalkSampler,
     SRWalkGeometry,
     SRWalkSampler,
     draw_ensemble_rwalk_constrained,
-    draw_rwalk_constrained,
     draw_srwalk_constrained,
+    prepare_srwalk_start,
 )
 from .model import CallableModel, Model
 from .output import normalize_output_path, prepare_output_directory
@@ -62,7 +59,11 @@ from .replacement import (
     ReplacementJob,
     ReplacementQueue,
     ReplacementResult,
+    ReplacementWorkerContext,
+    SRWalkTask,
     build_replacement,
+    build_srwalk_replacement,
+    initialize_replacement_worker,
     prepare_replacement_snapshot,
 )
 from .results import EnsembleMoveHistory, NISMOResult, RunHistory, SRWalkDiagnostics
@@ -82,6 +83,15 @@ def _as_generator(
     if isinstance(rng, bool) or not isinstance(rng, int):
         raise TypeError("rng must be an integer seed or numpy.random.Generator")
     return np.random.default_rng(rng)
+
+
+def _get_seed_sequence(
+    rng: np.random.Generator,
+    nitems: int,
+) -> list[np.random.SeedSequence]:
+    """Create deterministic worker streams using Dynesty's pool rule."""
+    entropy = rng.integers(0, 2**63 - 1, size=4)
+    return np.random.SeedSequence(entropy).spawn(nitems)
 
 
 @dataclass(slots=True)
@@ -163,7 +173,6 @@ def _draw_replacement(
     threshold_tie_breaker: float,
     rng: np.random.Generator,
     deadline: float | None,
-    rwalk_sampler: RWalkSampler | None,
     srwalk_sampler: SRWalkSampler | None,
     srwalk_factor: NDArray[np.float64] | None,
 ) -> ConstrainedAttempt:
@@ -177,27 +186,6 @@ def _draw_replacement(
             tie_policy=config.tie_policy,
             rng=rng,
             batch_size=config.proposal_batch_size,
-            max_proposals=config.max_proposals_per_replacement,
-            max_likelihood_calls=config.max_likelihood_calls,
-            deadline=deadline,
-        )
-    if config.proposal_scheme == "rwalk":
-        if rwalk_sampler is None:
-            raise RuntimeError("rwalk controller is not initialized")
-        return draw_rwalk_constrained(
-            evaluator=evaluator,
-            live_theta=live_theta,
-            live_log_likelihood=live_log_likelihood,
-            live_log_prior=live_log_prior,
-            live_log_q0=live_log_q0,
-            live_log_psi0=live_log_psi0,
-            live_tie_breakers=live_tie_breakers,
-            worst=worst,
-            threshold=threshold,
-            threshold_tie_breaker=threshold_tie_breaker,
-            tie_policy=config.tie_policy,
-            sampler=rwalk_sampler,
-            rng=rng,
             max_proposals=config.max_proposals_per_replacement,
             max_likelihood_calls=config.max_likelihood_calls,
             deadline=deadline,
@@ -292,14 +280,9 @@ def _worker_model(model: Any, *, n_workers: int) -> Any:
 def _fixed_job_call_requirement(
     *,
     config: NISMOConfig,
-    rwalk_sampler: RWalkSampler | None,
     srwalk_sampler: SRWalkSampler | None,
 ) -> int | None:
     """Return the worst-case per-job likelihood reservation when fixed."""
-    if config.proposal_scheme == "rwalk":
-        if rwalk_sampler is None:  # pragma: no cover - run initializes it
-            raise RuntimeError("rwalk controller is not initialized")
-        return rwalk_sampler.walks
     if config.proposal_scheme in ("s-rwalk", "mor-rwalk"):
         if srwalk_sampler is None:  # pragma: no cover - run initializes it
             raise RuntimeError("s-rwalk controller is not initialized")
@@ -418,7 +401,6 @@ class NISMOSampler:
         self.rng = _as_generator(rng)
         self.proposal_batch_size = proposal_batch_size
         self.tie_policy = tie_policy
-        self.rwalk_settings = RWalkSettings()
         self.srwalk_settings = (
             SRWalkSettings() if srwalk_settings is None else srwalk_settings
         )
@@ -603,11 +585,6 @@ class NISMOSampler:
         )
         self.proposal_morph = self.importance_morph
         self.adaptive_proposal_controller = None
-        rwalk_sampler = (
-            RWalkSampler(settings=config.rwalk_settings, ndim=self.model.ndim)
-            if config.proposal_scheme == "rwalk"
-            else None
-        )
         srwalk_sampler = (
             SRWalkSampler(
                 settings=config.srwalk_settings,
@@ -746,33 +723,39 @@ class NISMOSampler:
         compatibility_mode = (
             config.parallel.n_workers == 1 and config.parallel.queue_size == 1
         )
-        executor = (
-            ProcessPoolExecutor(
-                max_workers=config.parallel.n_workers,
-                mp_context=mp.get_context("spawn"),
-            )
-            if not compatibility_mode and config.parallel.n_workers > 1
-            else None
-        )
         worker_model = _worker_model(
             self.model,
             n_workers=config.parallel.n_workers,
         )
-        job_seed_sequence = (
-            None
-            if compatibility_mode
-            else np.random.SeedSequence(
-                tuple(
-                    int(value)
-                    for value in self.rng.integers(
-                        0,
-                        2**32,
-                        size=4,
-                        dtype=np.uint32,
-                    )
-                )
-            )
+        worker_context = ReplacementWorkerContext(
+            config=config,
+            model=worker_model,
+            importance_morph=self.importance_morph,
         )
+        # Dynesty initializes the function cache in both workers and the
+        # coordinator. This also keeps direct map-compatible calls testable.
+        initialize_replacement_worker(worker_context)
+        worker_pool = (
+            mp.get_context("spawn").Pool(
+                processes=config.parallel.n_workers,
+                initializer=initialize_replacement_worker,
+                initargs=(worker_context,),
+            )
+            if not compatibility_mode
+            else None
+        )
+
+        def close_worker_pool(*, terminate: bool) -> None:
+            nonlocal worker_pool
+            if worker_pool is None:
+                return
+            if terminate:
+                worker_pool.terminate()
+            else:
+                worker_pool.close()
+            worker_pool.join()
+            worker_pool = None
+
         next_job_id = 0
         epoch_results: list[ReplacementResult] = []
         srwalk_queue_setup_seconds = 0.0
@@ -809,15 +792,6 @@ class NISMOSampler:
             nonlocal epoch_results
             if not epoch_results:
                 return
-            if rwalk_sampler is not None:
-                completed_rwalk = tuple(
-                    (result.attempt.n_accepted, float(result.proposal_scale))
-                    for result in epoch_results
-                    if result.attempt.draw is not None
-                    and result.attempt.n_completed == rwalk_sampler.walks
-                    and result.proposal_scale is not None
-                )
-                rwalk_sampler.record_completed_epoch(completed_rwalk)
             if srwalk_sampler is not None:
                 completed_srwalk = tuple(
                     (
@@ -862,7 +836,6 @@ class NISMOSampler:
 
             reserved_calls = _fixed_job_call_requirement(
                 config=config,
-                rwalk_sampler=rwalk_sampler,
                 srwalk_sampler=srwalk_sampler,
             )
             job_call_budget: int | None = None
@@ -887,70 +860,123 @@ class NISMOSampler:
             if capacity <= 0:
                 return "max_likelihood_calls"
 
-            srwalk_factor = (
-                srwalk_geometry.factor_for_worst(live_theta[worst])
-                if srwalk_geometry is not None
-                else None
-            )
             setup_start = time.perf_counter() if config.srwalk_settings.profile else 0.0
-            snapshot = prepare_replacement_snapshot(
-                threshold=threshold,
-                threshold_tie_breaker=threshold_tie,
-                worst=worst,
-                live_theta=live_theta,
-                live_log_likelihood=live_log_likelihood,
-                live_log_prior=live_log_prior,
-                live_log_q0=live_log_q0,
-                live_log_psi0=live_log_psi0,
-                live_tie_breakers=live_tie_breakers,
-                proposal_revision=active_proposal_revision(),
-                srwalk_factor=srwalk_factor,
-            )
-            jobs: list[ReplacementJob] = []
-            if job_seed_sequence is None:  # pragma: no cover - queued mode only
-                raise RuntimeError("replacement job seed sequence is unavailable")
-            child_sequences = job_seed_sequence.spawn(capacity)
-            for child_sequence in child_sequences:
-                entropy = tuple(
-                    int(value) for value in child_sequence.generate_state(4)
-                )
-                jobs.append(
-                    ReplacementJob(
-                        job_id=next_job_id,
-                        snapshot=snapshot,
-                        config=config,
-                        model=worker_model,
-                        importance_morph=self.importance_morph,
-                        proposal_morph=self.proposal_morph,
-                        seed_entropy=entropy,
-                        max_likelihood_calls=job_call_budget,
-                        deadline=deadline,
-                        rwalk_scale=(
-                            None if rwalk_sampler is None else rwalk_sampler.scale
-                        ),
-                        srwalk_scale=(
-                            None if srwalk_sampler is None else srwalk_sampler.scale
-                        ),
-                        srwalk_steps=(
-                            None if srwalk_sampler is None else srwalk_sampler.n_steps
-                        ),
+            proposal_revision = active_proposal_revision()
+            if config.proposal_scheme in ("s-rwalk", "mor-rwalk"):
+                if srwalk_geometry is None or srwalk_sampler is None:
+                    raise RuntimeError("s-rwalk queue state is not initialized")
+                # Match Dynesty: select every starting live point and proposal
+                # geometry in the coordinator before deriving worker seeds.
+                srwalk_factor = srwalk_geometry.factor_for_worst(live_theta[worst])
+                starts: list[EvaluatedPoint] = []
+                for _ in range(capacity):
+                    starting = prepare_srwalk_start(
+                        live_theta=live_theta,
+                        live_log_likelihood=live_log_likelihood,
+                        live_log_prior=live_log_prior,
+                        live_log_q0=live_log_q0,
+                        live_log_psi0=live_log_psi0,
+                        live_tie_breakers=live_tie_breakers,
+                        worst=worst,
+                        threshold=threshold,
+                        threshold_tie_breaker=threshold_tie,
+                        tie_policy=config.tie_policy,
+                        rng=self.rng,
                     )
+                    if starting is None:
+                        return "insufficient_eligible_survivors"
+                    starts.append(starting)
+                rseeds: list[np.random.SeedSequence | np.random.Generator]
+                if capacity > 1:
+                    rseeds = list(_get_seed_sequence(self.rng, capacity))
+                else:
+                    rseeds = [self.rng]
+                tasks: list[SRWalkTask] = []
+                for starting, rseed in zip(starts, rseeds, strict=True):
+                    tasks.append(
+                        SRWalkTask(
+                            job_id=next_job_id,
+                            starting=starting,
+                            threshold=threshold,
+                            threshold_tie_breaker=threshold_tie,
+                            proposal_revision=proposal_revision,
+                            proposal_factor=srwalk_factor,
+                            scale=srwalk_sampler.scale,
+                            n_steps=srwalk_sampler.n_steps,
+                            rseed=rseed,
+                            max_likelihood_calls=job_call_budget,
+                            deadline=deadline,
+                        )
+                    )
+                    next_job_id += 1
+                if config.srwalk_settings.profile:
+                    srwalk_queue_setup_seconds += time.perf_counter() - setup_start
+                queue_accounting.queue_refills += 1
+                queue_accounting.queue_jobs_submitted += len(tasks)
+                dispatch_start = (
+                    time.perf_counter() if config.srwalk_settings.profile else 0.0
                 )
-                next_job_id += 1
-            if config.srwalk_settings.profile:
-                srwalk_queue_setup_seconds += time.perf_counter() - setup_start
-
-            queue_accounting.queue_refills += 1
-            queue_accounting.queue_jobs_submitted += len(jobs)
-            dispatch_start = (
-                time.perf_counter() if config.srwalk_settings.profile else 0.0
-            )
-            if executor is None:
-                results = [build_replacement(job) for job in jobs]
+                if worker_pool is None:  # pragma: no cover - queued mode owns a pool
+                    results = [build_srwalk_replacement(task) for task in tasks]
+                else:
+                    results = worker_pool.map(
+                        build_srwalk_replacement,
+                        tasks,
+                        chunksize=1,
+                    )
+                if config.srwalk_settings.profile:
+                    srwalk_worker_dispatch_seconds += (
+                        time.perf_counter() - dispatch_start
+                    )
             else:
-                results = list(executor.map(build_replacement, jobs, chunksize=1))
-            if config.srwalk_settings.profile:
-                srwalk_worker_dispatch_seconds += time.perf_counter() - dispatch_start
+                snapshot = prepare_replacement_snapshot(
+                    threshold=threshold,
+                    threshold_tie_breaker=threshold_tie,
+                    worst=worst,
+                    live_theta=live_theta,
+                    live_log_likelihood=live_log_likelihood,
+                    live_log_prior=live_log_prior,
+                    live_log_q0=live_log_q0,
+                    live_log_psi0=live_log_psi0,
+                    live_tie_breakers=live_tie_breakers,
+                    proposal_revision=proposal_revision,
+                )
+                if capacity > 1:
+                    rseeds = list(_get_seed_sequence(self.rng, capacity))
+                else:
+                    rseeds = [self.rng]
+                jobs: list[ReplacementJob] = []
+                for rseed in rseeds:
+                    jobs.append(
+                        ReplacementJob(
+                            job_id=next_job_id,
+                            snapshot=snapshot,
+                            proposal_morph=self.proposal_morph,
+                            rseed=rseed,
+                            max_likelihood_calls=job_call_budget,
+                            deadline=deadline,
+                        )
+                    )
+                    next_job_id += 1
+                if config.srwalk_settings.profile:
+                    srwalk_queue_setup_seconds += time.perf_counter() - setup_start
+                queue_accounting.queue_refills += 1
+                queue_accounting.queue_jobs_submitted += len(jobs)
+                dispatch_start = (
+                    time.perf_counter() if config.srwalk_settings.profile else 0.0
+                )
+                if worker_pool is None:  # pragma: no cover - queued mode owns a pool
+                    results = [build_replacement(job) for job in jobs]
+                else:
+                    results = worker_pool.map(
+                        build_replacement,
+                        jobs,
+                        chunksize=1,
+                    )
+                if config.srwalk_settings.profile:
+                    srwalk_worker_dispatch_seconds += (
+                        time.perf_counter() - dispatch_start
+                    )
             for result in results:
                 queue_accounting.queue_jobs_completed += 1
                 queue_accounting.prefetch_likelihood_calls += (
@@ -1010,7 +1036,6 @@ class NISMOSampler:
 
                 if attempt is None:
                     attempt_uses_mcmc = config.proposal_scheme in (
-                        "rwalk",
                         "s-rwalk",
                         "en-rwalk",
                         "mor-rwalk",
@@ -1039,7 +1064,6 @@ class NISMOSampler:
                             threshold_tie_breaker=threshold_tie,
                             rng=self.rng,
                             deadline=deadline,
-                            rwalk_sampler=rwalk_sampler,
                             srwalk_sampler=srwalk_sampler,
                             srwalk_factor=srwalk_factor,
                         )
@@ -1124,8 +1148,7 @@ class NISMOSampler:
                             )
                         attempt = selected.attempt
             except BaseException:
-                if executor is not None:
-                    executor.shutdown(wait=True, cancel_futures=True)
+                close_worker_pool(terminate=True)
                 progress_reporter.close("error")
                 raise
             if attempt is None:  # pragma: no cover - exhaustive branches above
@@ -1354,8 +1377,7 @@ class NISMOSampler:
         queue_accounting.queue_candidates_invalidated += sum(
             result.attempt.draw is not None for result in discarded_results
         )
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
+        close_worker_pool(terminate=False)
         queue_diagnostics = queue_accounting.freeze()
         srwalk_diagnostics = None
         if (

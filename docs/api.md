@@ -151,6 +151,9 @@ NISMOSampler.from_posterior_samples(
 `morph_config` is passed to `MorphProposal.fit`. `sampler.citations` returns a
 list of `(citation, url)` pairs required by the configured replacement method.
 `queue_size=None` resolves to `n_workers`; the default `(1, 1)` path is serial.
+Values above one require `n_workers > 1`. Parallel jobs follow Dynesty's
+ordered synchronous-map design: each job returns one complete constrained
+candidate, while live-point and quadrature state remain serial.
 The legacy `parallel=ParallelSettings(...)` keyword remains available for
 backward compatibility and cannot be mixed with the direct arguments.
 

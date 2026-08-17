@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Matched Dynesty's replacement-pool architecture: synchronous ordered queue
+  epochs, coordinator-prepared `s-rwalk` starts and geometry, deterministic
+  per-job seeds, process-initialized model/importance caches, `chunksize=1`,
+  FIFO current-threshold validation, and queue-boundary-only adaptation.
 - Made `s-rwalk` chain lengths adaptive from recent MH acceptance, with bounded
   growth, a zero-acceptance scale contraction, queue-epoch-safe adaptation, and
   an optional `zero_move_policy="stop"` that prevents duplicate replacements by

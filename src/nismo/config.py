@@ -31,7 +31,9 @@ class ParallelSettings:
     """Replacement-prefetch worker and queue settings.
 
     ``queue_size`` defaults to ``n_workers``.  The all-serial compatibility
-    path is therefore represented by the default ``(1, 1)`` settings.
+    path is therefore represented by the default ``(1, 1)`` settings.  A
+    queue larger than one requires a process pool, so it also requires
+    ``n_workers > 1``.
     """
 
     n_workers: int = 1
@@ -49,6 +51,8 @@ class ParallelSettings:
         )
         object.__setattr__(self, "n_workers", workers)
         object.__setattr__(self, "queue_size", queue_size)
+        if workers == 1 and queue_size > 1:
+            raise ConfigurationError("parallel queue_size > 1 requires n_workers > 1")
 
 
 def _positive_integer(value: object, *, name: str) -> int:
