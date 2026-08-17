@@ -65,6 +65,8 @@ The dedicated `dynesty_nlive100.slurm` and
 campaign. They write, respectively,
 `outdir/seed_<index>/dynesty_nlive100/dynesty_nlive100_result.json` and
 `outdir/seed_<index>/nismo_from_dynesty_nlive100_<scheme>_seed_<NISMO seed>/`.
+The NISMO run uses the same live-point count as its Dynesty training run, so
+this pair runs both samplers with 100 live points.
 
 From the repository `analysis/` directory on OzSTAR, submit NISMO only after
 the complete Dynesty array has succeeded:
@@ -96,6 +98,5 @@ SLURM_CPUS_PER_TASK=4 uv run --extra lvk \
 If an interrupted run has its `dynesty_nlive500_resume.pickle` checkpoint,
 repeat the same command with `--resume` to continue it.
 
-This fixed campaign runner deliberately does not support that alternate input
-path. Keep it as a separate experiment rather than mixing it into the
-production all-seed comparison.
+Run NISMO on that isolated posterior with `--dynesty-nlive 500`; NISMO will
+also use 500 live points and will write to a setting-specific output directory.

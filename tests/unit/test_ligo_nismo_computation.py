@@ -79,6 +79,16 @@ def test_default_max_iterations_scales_with_live_count() -> None:
     assert RUNNER.default_max_iterations(2_000) == 50_000
 
 
+@pytest.mark.parametrize("n_live", [100, 500, 2_000])
+def test_nismo_live_count_matches_dynesty(n_live: int) -> None:
+    assert RUNNER.matched_nismo_nlive(n_live) == n_live
+
+
+def test_matched_live_count_rejects_nonpositive_values() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        RUNNER.matched_nismo_nlive(0)
+
+
 def test_ligo_runner_is_fixed_to_srwalk() -> None:
     assert RUNNER.NISMO_PROPOSAL_SCHEME == "s-rwalk"
 
@@ -86,10 +96,13 @@ def test_ligo_runner_is_fixed_to_srwalk() -> None:
 def test_ligo_runner_cli_selects_replica_seed() -> None:
     defaults = RUNNER.parse_args(["48"])
     replica = RUNNER.parse_args(["48", "--nismo-seed", "47"])
+    low_live = RUNNER.parse_args(["48", "--dynesty-nlive", "500"])
 
     assert defaults.lvk_seed == 48
+    assert defaults.dynesty_nlive == 2_000
     assert defaults.nismo_seed == RUNNER.NISMO_DEFAULT_SEED
     assert replica.nismo_seed == 47
+    assert low_live.dynesty_nlive == 500
 
 
 def test_dynesty_result_path_keeps_low_live_runs_isolated(tmp_path: Path) -> None:

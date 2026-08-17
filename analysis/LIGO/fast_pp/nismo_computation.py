@@ -28,7 +28,6 @@ import numpy as np
 from nismo import MorphProposal, NISMOSampler, ParallelSettings
 
 NISMO_PROPOSAL_SCHEME = "s-rwalk"
-NISMO_N_LIVE = 2000
 NISMO_DLOGZ = 0.1
 NISMO_MORPH_TYPE = "2_group"
 NISMO_DEFAULT_SEED = 20260811
@@ -63,6 +62,13 @@ def training_samples(result: Any, names: Sequence[str]) -> np.ndarray:
 def default_max_iterations(n_live: int) -> int:
     """Return a live-count-scaled hard ceiling for production analyses."""
     return max(10_000, 25 * n_live)
+
+
+def matched_nismo_nlive(dynesty_nlive: int) -> int:
+    """Use the Dynesty live-point count for the paired NISMO calculation."""
+    if dynesty_nlive <= 0:
+        raise ValueError("--dynesty-nlive must be a positive integer")
+    return dynesty_nlive
 
 
 def dynesty_result_path(result_root: Path, lvk_seed: int, dynesty_nlive: int) -> Path:
@@ -324,8 +330,7 @@ def main() -> None:
     from pp_setup import load_simulation
 
     result_root = Path(__file__).resolve().parent / "outdir"
-    if args.dynesty_nlive <= 0:
-        raise ValueError("--dynesty-nlive must be a positive integer")
+    nismo_nlive = matched_nismo_nlive(args.dynesty_nlive)
     result_path = dynesty_result_path(
         result_root, args.lvk_seed, args.dynesty_nlive
     ).resolve()
@@ -375,13 +380,13 @@ def main() -> None:
             f"the fixed tolerance {POSTERIOR_AUDIT_TOLERANCE:.3e}"
         )
     morphz = load_existing_morphz(result_path, args.lvk_seed)
-    max_iterations = default_max_iterations(NISMO_N_LIVE)
+    max_iterations = default_max_iterations(nismo_nlive)
     nismo_start = time.perf_counter()
     nismo_result, proposal = run_nismo(
         model=model,
         samples=samples,
         names=names,
-        n_live=NISMO_N_LIVE,
+        n_live=nismo_nlive,
         dlogz=NISMO_DLOGZ,
         seed=args.nismo_seed,
         morph_type=NISMO_MORPH_TYPE,
@@ -399,7 +404,7 @@ def main() -> None:
         morphz=morphz,
         dynesty_nlive=args.dynesty_nlive,
         seed=args.nismo_seed,
-        n_live=NISMO_N_LIVE,
+        n_live=nismo_nlive,
         dlogz=NISMO_DLOGZ,
         max_iterations=max_iterations,
         runtime_seconds=nismo_runtime_seconds,
