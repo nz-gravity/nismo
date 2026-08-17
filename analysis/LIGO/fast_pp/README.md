@@ -56,7 +56,28 @@ For an array run on OzSTAR, submit `nismo.slurm`. The script loads
 By default it reads the existing Dynesty-2000 result for each seed from
 `analysis/LIGO/fast_pp/outdir/seed_<index>/dynesty_result.json` and writes the
 NISMO comparison JSON to a separate directory for each NISMO seed:
-`outdir/seed_<index>/nismo_swalk_seed_<NISMO seed>/`.
+`outdir/seed_<index>/nismo_<scheme>_seed_<NISMO seed>/`.
+
+## Dynesty-100 followed by NISMO
+
+The dedicated `dynesty_nlive100.slurm` and
+`nismo_from_dynesty_nlive100.slurm` arrays preserve the existing Dynesty-2000
+campaign. They write, respectively,
+`outdir/seed_<index>/dynesty_nlive100/dynesty_nlive100_result.json` and
+`outdir/seed_<index>/nismo_from_dynesty_nlive100_<scheme>_seed_<NISMO seed>/`.
+
+From the repository `analysis/` directory on OzSTAR, submit NISMO only after
+the complete Dynesty array has succeeded:
+
+```bash
+dynesty_job=$(sbatch --parsable LIGO/fast_pp/dynesty_nlive100.slurm)
+sbatch --dependency=afterok:${dynesty_job} \
+  LIGO/fast_pp/nismo_from_dynesty_nlive100.slurm
+```
+
+For an independent NISMO replacement replica, set `NISMO_SEED` on the second
+submission. The Dynesty-100 array resumes a matching incomplete checkpoint but
+refuses to overwrite a completed result.
 
 ## Low-live-point training-posterior check
 

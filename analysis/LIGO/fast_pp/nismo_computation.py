@@ -25,12 +25,13 @@ from typing import Any
 
 import numpy as np
 
-from nismo import MorphProposal, NISMOSampler, ParallelSettings
+from nismo import MorphProposal, MORWalkSettings, NISMOSampler, ParallelSettings
 
-NISMO_PROPOSAL_SCHEME = "s-rwalk"
+NISMO_PROPOSAL_SCHEME = "mor-rwalk"
 NISMO_N_LIVE = 500
 NISMO_DLOGZ = 0.1
-NISMO_MORPH_TYPE = "silverman"
+NISMO_MORPH_TYPE = "2_group"
+NISMO_MOR_RWALK_N_PROPOSALS = 20_000
 NISMO_DEFAULT_SEED = 20260811
 POSTERIOR_AUDIT_POINTS = 32
 POSTERIOR_AUDIT_TOLERANCE = 1.0e-6
@@ -63,6 +64,15 @@ def training_samples(result: Any, names: Sequence[str]) -> np.ndarray:
 def default_max_iterations(n_live: int) -> int:
     """Return a live-count-scaled hard ceiling for production analyses."""
     return max(10_000, 25 * n_live)
+
+
+def dynesty_result_path(result_root: Path, lvk_seed: int, dynesty_nlive: int) -> Path:
+    """Return the isolated result file for one Dynesty live-point setting."""
+    seed_dir = result_root / f"seed_{lvk_seed}"
+    if dynesty_nlive == 2_000:
+        return seed_dir / "dynesty_result.json"
+    label = f"dynesty_nlive{dynesty_nlive}"
+    return seed_dir / label / f"{label}_result.json"
 
 
 def load_existing_morphz(result_path: Path, index: int) -> dict[str, Any] | None:
@@ -211,6 +221,8 @@ def run_nismo(
     dlogz: float,
     seed: int,
     morph_type: str,
+    proposal_scheme: str,
+    mor_rwalk_n_proposals: int,
     max_iterations: int | None,
     progress: bool = True,
 ) -> tuple[Any, Any]:
@@ -222,14 +234,19 @@ def run_nismo(
         morph_type=morph_type,
         kde_bw="silverman",
     )
-    sampler = NISMOSampler(
-        model=model,
-        importance_morph=proposal,
-        proposal_scheme=NISMO_PROPOSAL_SCHEME,
-        n_live=n_live,
-        rng=seed,
-        parallel=parallel_settings,
-    )
+    sampler_kwargs: dict[str, Any] = {
+        "model": model,
+        "importance_morph": proposal,
+        "proposal_scheme": proposal_scheme,
+        "n_live": n_live,
+        "rng": seed,
+        "parallel": parallel_settings,
+    }
+    if proposal_scheme == "mor-rwalk":
+        sampler_kwargs["mor_rwalk_settings"] = MORWalkSettings(
+            n_proposals=mor_rwalk_n_proposals,
+        )
+    sampler = NISMOSampler(**sampler_kwargs)
     run_kwargs: dict[str, Any] = {"dlogz": dlogz, "progress": progress}
     if max_iterations is not None:
         run_kwargs["max_iterations"] = max_iterations
@@ -245,6 +262,8 @@ def result_payload(
     names: Sequence[str],
     audit: dict[str, float | int],
     morphz: dict[str, Any] | None,
+    proposal_scheme: str,
+    dynesty_nlive: int,
     seed: int,
     n_live: int,
     dlogz: float,
@@ -254,13 +273,14 @@ def result_payload(
     return {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "dynesty_result": str(result_path.resolve()),
+        "dynesty_nlive": dynesty_nlive,
         "parameter_names": list(names),
         "n_training_samples": int(proposal.metadata.n_training),
         "n_live": n_live,
         "dlogz": dlogz,
         "max_iterations": max_iterations,
         "seed": seed,
-        "proposal_scheme": NISMO_PROPOSAL_SCHEME,
+        "proposal_scheme": proposal_scheme,
         "parallel": {"n_workers": 4, "queue_size": 4},
         "morph_metadata": {
             "selected_groups": [
@@ -293,10 +313,28 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lvk_seed", type=int, help="row in injections.csv")
     parser.add_argument(
+        "--dynesty-nlive",
+        type=int,
+        default=2_000,
+        help="live points in the Dynesty result used to train NISMO",
+    )
+    parser.add_argument(
+        "--proposal-scheme",
+        choices=("mor-rwalk", "s-rwalk", "en-rwalk"),
+        default=NISMO_PROPOSAL_SCHEME,
+        help="NISMO replacement scheme to use for this replica",
+    )
+    parser.add_argument(
         "--nismo-seed",
         type=int,
         default=NISMO_DEFAULT_SEED,
         help="random seed for this NISMO replica",
+    )
+    parser.add_argument(
+        "--mor-rwalk-n-proposals",
+        type=int,
+        default=NISMO_MOR_RWALK_N_PROPOSALS,
+        help="initial Morph pool size when proposal_scheme is mor-rwalk",
     )
     return parser.parse_args(arguments)
 
@@ -307,12 +345,21 @@ def main() -> None:
     from pp_setup import load_simulation
 
     result_root = Path(__file__).resolve().parent / "outdir"
-    result_path = (
-        result_root / f"seed_{args.lvk_seed}" / "dynesty_result.json"
+    if args.dynesty_nlive <= 0:
+        raise ValueError("--dynesty-nlive must be a positive integer")
+    result_path = dynesty_result_path(
+        result_root, args.lvk_seed, args.dynesty_nlive
     ).resolve()
-    output_dir = (
-        result_root / f"seed_{args.lvk_seed}" / f"nismo_swalk_seed_{args.nismo_seed}"
-    ).resolve()
+    scheme_name = args.proposal_scheme.replace("-", "_")
+    training_name = (
+        "dynesty"
+        if args.dynesty_nlive == 2_000
+        else f"dynesty_nlive{args.dynesty_nlive}"
+    )
+    output_name = f"nismo_{scheme_name}_seed_{args.nismo_seed}"
+    if args.dynesty_nlive != 2_000:
+        output_name = f"nismo_from_{training_name}_{scheme_name}_seed_{args.nismo_seed}"
+    output_dir = (result_root / f"seed_{args.lvk_seed}" / output_name).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     if not result_path.is_file():
         raise FileNotFoundError(result_path)
@@ -359,6 +406,8 @@ def main() -> None:
         dlogz=NISMO_DLOGZ,
         seed=args.nismo_seed,
         morph_type=NISMO_MORPH_TYPE,
+        proposal_scheme=args.proposal_scheme,
+        mor_rwalk_n_proposals=args.mor_rwalk_n_proposals,
         max_iterations=max_iterations,
         progress=True,
     )
@@ -371,6 +420,8 @@ def main() -> None:
         names=names,
         audit=audit,
         morphz=morphz,
+        proposal_scheme=args.proposal_scheme,
+        dynesty_nlive=args.dynesty_nlive,
         seed=args.nismo_seed,
         n_live=NISMO_N_LIVE,
         dlogz=NISMO_DLOGZ,
