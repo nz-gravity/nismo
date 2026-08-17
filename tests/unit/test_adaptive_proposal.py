@@ -12,6 +12,10 @@ from nismo.adaptive import AdaptiveMorphController
 pytestmark = pytest.mark.unit
 
 
+def _shifted_log_likelihood(theta: NDArray[np.float64]) -> NDArray[np.float64]:
+    return -0.5 * (theta[:, 0] - 1.5) ** 2
+
+
 @dataclass
 class RefitState:
     inputs: list[NDArray[np.float64]] = field(default_factory=list)
@@ -103,7 +107,7 @@ def test_adaptive_sampler_keeps_q0_fixed_and_refits_from_live_rows_only() -> Non
     model = CallableModel(
         ndim=1,
         parameter_names=("x",),
-        log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 1.5) ** 2,
+        log_likelihood_fn=_shifted_log_likelihood,
         log_prior_fn=importance.log_prob,
     )
     result = NISMOSampler(
@@ -199,13 +203,13 @@ def test_run_stopping_at_update_boundary_does_not_refit() -> None:
     assert state.inputs == []
 
 
-def test_serial_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
+def test_pool_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
     state = RefitState()
     importance = TrackingNormalProposal(state=state)
     model = CallableModel(
         ndim=1,
         parameter_names=("x",),
-        log_likelihood_fn=lambda x: -0.5 * (x[:, 0] - 1.5) ** 2,
+        log_likelihood_fn=_shifted_log_likelihood,
         log_prior_fn=importance.log_prob,
     )
     result = NISMOSampler(
@@ -216,7 +220,7 @@ def test_serial_prefetch_epochs_end_at_adaptive_refit_boundaries() -> None:
         n_live=10,
         rng=17,
         proposal_batch_size=8,
-        n_workers=1,
+        n_workers=2,
         queue_size=4,
     ).run(
         dlogz=1.0e-8,

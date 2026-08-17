@@ -144,7 +144,10 @@ in the directory are preserved.
 
 Set `n_workers` directly on `NISMOSampler` to construct replacement candidates
 in parallel. `queue_size` defaults to `n_workers` and can be set explicitly to
-control the FIFO prefetch depth.
+control the FIFO prefetch depth. This follows Dynesty's process model: workers
+run complete replacement chains, results return through a synchronous ordered
+map, and the coordinator consumes them one at a time after checking the current
+constraint. Use `queue_size=n_workers` for the normal configuration.
 
 ## 5. Use the posterior
 

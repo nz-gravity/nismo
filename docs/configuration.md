@@ -177,6 +177,19 @@ worker and a one-item queue, preserving serial behavior. Completed replacements
 are consumed FIFO and revalidated against the current threshold. Larger queues
 can waste likelihood calls when prefetched candidates become stale.
 
+As in Dynesty, one pool job constructs one complete constrained replacement;
+steps within an individual MCMC chain remain sequential. Queue refills use a
+synchronous ordered `map` with `chunksize=1`. The coordinator selects each
+`s-rwalk` starting survivor and freezes its covariance factor before dispatch,
+while the model and fixed importance proposal are initialized once per worker.
+The nested quadrature, live-point commit, stopping logic, and proposal
+adaptation remain coordinator-only. Proposal adaptation occurs only after the
+current FIFO queue epoch drains.
+
+`queue_size > 1` requires `n_workers > 1`. Normally set `queue_size` equal to
+`n_workers`; a larger queue is useful only when replacement runtimes are highly
+variable and may increase stale speculative work.
+
 The older `parallel=ParallelSettings(...)` form remains accepted for backward
 compatibility, but it cannot be combined with `n_workers` or `queue_size`.
 

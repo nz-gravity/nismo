@@ -35,7 +35,9 @@ from nismo.mcmc import (
     draw_rwalk_constrained,
     draw_srwalk_constrained,
     eligible_survivor_indices,
+    evolve_srwalk_constrained,
     log_metropolis_acceptance_ratio,
+    prepare_srwalk_start,
 )
 from nismo.sampler import _MorphReplacementPool
 
@@ -881,6 +883,85 @@ def test_srwalk_uses_frozen_survivor_covariance_and_can_stay_put(
     assert attempt.n_completed == 7
     assert sampler.scale == pytest.approx(0.5 * np.exp(-1.0))
     assert sampler.n_steps == 14
+
+
+def test_prepared_srwalk_worker_path_matches_the_serial_kernel() -> None:
+    first = _all_rejected_problem()
+    second = _all_rejected_problem()
+    (
+        serial_evaluator,
+        theta,
+        log_likelihood,
+        log_prior,
+        log_q0,
+        log_psi0,
+        ties,
+    ) = first
+    worker_evaluator = second[0]
+    seed = 2048
+    settings = SRWalkSettings(n_steps=7, scale=1.0, dynamic_steps=False)
+    serial = draw_srwalk_constrained(
+        evaluator=serial_evaluator,
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=log_prior,
+        live_log_q0=log_q0,
+        live_log_psi0=log_psi0,
+        live_tie_breakers=ties,
+        worst=0,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        sampler=SRWalkSampler(settings=settings, ndim=1),
+        rng=np.random.default_rng(seed),
+        max_proposals=7,
+        max_likelihood_calls=None,
+        deadline=None,
+        proposal_factor=np.ones((1, 1)),
+    )
+
+    worker_rng = np.random.default_rng(seed)
+    starting = prepare_srwalk_start(
+        live_theta=theta,
+        live_log_likelihood=log_likelihood,
+        live_log_prior=log_prior,
+        live_log_q0=log_q0,
+        live_log_psi0=log_psi0,
+        live_tie_breakers=ties,
+        worst=0,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        rng=worker_rng,
+    )
+    assert starting is not None
+    worker = evolve_srwalk_constrained(
+        evaluator=worker_evaluator,
+        starting=starting,
+        threshold=0.0,
+        threshold_tie_breaker=ties[0],
+        tie_policy="strict",
+        proposal_factor=np.ones((1, 1)),
+        scale=1.0,
+        n_steps=7,
+        zero_move_policy="accept",
+        max_proposals=7,
+        max_likelihood_calls=None,
+        deadline=None,
+        rng=worker_rng,
+    )
+
+    assert serial.reason == worker.reason
+    assert serial.n_proposed == worker.n_proposed
+    assert serial.n_valid == worker.n_valid
+    assert serial.n_accepted == worker.n_accepted
+    assert serial.n_moved == worker.n_moved
+    assert serial.n_completed == worker.n_completed
+    assert serial.draw is not None and worker.draw is not None
+    np.testing.assert_array_equal(serial.draw.point.theta, worker.draw.point.theta)
+    assert serial.draw.point.log_likelihood == worker.draw.point.log_likelihood
+    assert serial.draw.point.log_q0 == worker.draw.point.log_q0
+    assert serial.draw.point.tie_breaker == worker.draw.point.tie_breaker
 
 
 def test_srwalk_zero_move_policy_can_stop_without_returning_a_duplicate() -> None:

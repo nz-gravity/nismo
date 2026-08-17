@@ -728,6 +728,48 @@ def _point_from_live(
     )
 
 
+def prepare_srwalk_start(
+    *,
+    live_theta: NDArray[np.float64],
+    live_log_likelihood: NDArray[np.float64],
+    live_log_prior: NDArray[np.float64],
+    live_log_q0: NDArray[np.float64],
+    live_log_psi0: NDArray[np.float64],
+    live_tie_breakers: NDArray[np.float64],
+    worst: int,
+    threshold: float,
+    threshold_tie_breaker: float,
+    tie_policy: TiePolicy,
+    rng: np.random.Generator,
+) -> EvaluatedPoint | None:
+    """Choose one eligible survivor before dispatching an ``s-rwalk`` job.
+
+    Dynesty prepares starting live points in the coordinator and only sends
+    the frozen start and proposal geometry to workers.  Keeping the same
+    boundary avoids serializing the complete live set with every job.
+    """
+    eligible = eligible_survivor_indices(
+        live_log_psi0=live_log_psi0,
+        live_tie_breakers=live_tie_breakers,
+        worst=worst,
+        threshold=threshold,
+        threshold_tie_breaker=threshold_tie_breaker,
+        tie_policy=tie_policy,
+    )
+    if len(eligible) == 0:
+        return None
+    start_index = int(rng.choice(eligible))
+    return _point_from_live(
+        start_index,
+        live_theta=live_theta,
+        live_log_likelihood=live_log_likelihood,
+        live_log_prior=live_log_prior,
+        live_log_q0=live_log_q0,
+        live_log_psi0=live_log_psi0,
+        live_tie_breakers=live_tie_breakers,
+    )
+
+
 def _point_from_batch(
     batch: EvaluatedBatch,
     index: int,
@@ -894,46 +936,32 @@ def draw_rwalk_constrained(
     )
 
 
-def draw_srwalk_constrained(
+def evolve_srwalk_constrained(
     *,
     evaluator: BatchEvaluator,
-    live_theta: NDArray[np.float64],
-    live_log_likelihood: NDArray[np.float64],
-    live_log_prior: NDArray[np.float64],
-    live_log_q0: NDArray[np.float64],
-    live_log_psi0: NDArray[np.float64],
-    live_tie_breakers: NDArray[np.float64],
-    worst: int,
+    starting: EvaluatedPoint,
     threshold: float,
     threshold_tie_breaker: float,
     tie_policy: TiePolicy,
-    sampler: SRWalkSampler,
-    rng: np.random.Generator,
+    proposal_factor: NDArray[np.float64],
+    scale: float,
+    n_steps: int,
+    zero_move_policy: str,
     max_proposals: int,
     max_likelihood_calls: int | None,
     deadline: float | None,
-    proposal_factor: NDArray[np.float64] | None = None,
+    rng: np.random.Generator,
+    factorization_seconds: float = 0.0,
 ) -> ConstrainedAttempt:
-    """Evolve a survivor with Gaussian MH targeting constrained fixed ``q0``.
+    """Run one frozen sequential ``s-rwalk`` chain.
 
-    The discarded point defines the constraint but is never a chain state. The
-    regularized survivor covariance and adaptive scale are frozen for all
-    ``n_steps`` transitions in this replacement. Each valid symmetric proposal
-    is accepted with the fixed-importance ratio ``q0(proposed) / q0(current)``.
+    This is the worker-side equivalent of Dynesty's static internal sampler:
+    it receives an already selected live point and frozen axes, owns no live
+    or quadrature state, and returns one complete candidate plus statistics.
     """
-    _validate_live_arrays(
-        evaluator=evaluator,
-        live_theta=live_theta,
-        live_log_likelihood=live_log_likelihood,
-        live_log_prior=live_log_prior,
-        live_log_q0=live_log_q0,
-        live_log_psi0=live_log_psi0,
-        live_tie_breakers=live_tie_breakers,
-    )
-    walk_steps = sampler.n_steps
     failure = _preflight_failure(
         evaluator=evaluator,
-        required_proposals=walk_steps,
+        required_proposals=n_steps,
         max_proposals=max_proposals,
         # Prior-first evaluation makes this an upper bound rather than an
         # exact likelihood-call requirement. The loop enforces the hard limit.
@@ -942,50 +970,20 @@ def draw_srwalk_constrained(
     )
     if failure is not None:
         return ConstrainedAttempt(None, failure, 0, 0)
-    eligible = eligible_survivor_indices(
-        live_log_psi0=live_log_psi0,
-        live_tie_breakers=live_tie_breakers,
-        worst=worst,
-        threshold=threshold,
-        threshold_tie_breaker=threshold_tie_breaker,
-        tie_policy=tie_policy,
-    )
-    if len(eligible) == 0:
-        return ConstrainedAttempt(None, "insufficient_eligible_survivors", 0, 0)
-    factorization_start = time.perf_counter() if evaluator.profile else 0.0
-    if proposal_factor is None:
-        survivors = np.concatenate((live_theta[:worst], live_theta[worst + 1 :]))
-        factor = covariance_factor(
-            survivors,
-            shrinkage=sampler.covariance_shrinkage,
-            jitter=sampler.covariance_jitter,
+    if starting.theta.shape != (evaluator.ndim,):
+        raise NumericalInvariantError(
+            f"prepared s-rwalk start must have shape ({evaluator.ndim},)"
         )
-    else:
-        factor = np.asarray(proposal_factor, dtype=float)
-        if factor.shape != (evaluator.ndim, evaluator.ndim):
-            raise NumericalInvariantError("prepared s-rwalk factor has the wrong shape")
-        if not np.all(np.isfinite(factor)):
-            raise NumericalInvariantError(
-                "prepared s-rwalk factor contains NaN or infinity"
-            )
-    factorization_seconds = (
-        time.perf_counter() - factorization_start
-        if evaluator.profile and proposal_factor is None
-        else 0.0
-    )
-    start_index = int(rng.choice(eligible))
-    starting = _point_from_live(
-        start_index,
-        live_theta=live_theta,
-        live_log_likelihood=live_log_likelihood,
-        live_log_prior=live_log_prior,
-        live_log_q0=live_log_q0,
-        live_log_psi0=live_log_psi0,
-        live_tie_breakers=live_tie_breakers,
-    )
-    scale = sampler.scale
+    factor = np.asarray(proposal_factor, dtype=float)
+    if factor.shape != (evaluator.ndim, evaluator.ndim):
+        raise NumericalInvariantError("prepared s-rwalk factor has the wrong shape")
+    if not np.all(np.isfinite(factor)):
+        raise NumericalInvariantError(
+            "prepared s-rwalk factor contains NaN or infinity"
+        )
+
     proposal_start = time.perf_counter() if evaluator.profile else 0.0
-    standard_normals = rng.standard_normal(size=(walk_steps, evaluator.ndim))
+    standard_normals = rng.standard_normal(size=(n_steps, evaluator.ndim))
     increments = scale * (standard_normals @ factor.T)
     proposal_seconds = (
         time.perf_counter() - proposal_start if evaluator.profile else 0.0
@@ -1082,12 +1080,7 @@ def draw_srwalk_constrained(
         tie_breaker=current_tie_breaker,
     )
     draw = ConstrainedDraw(current, n_proposed, n_valid)
-    sampler.record_completed_walk(
-        accept=n_accepted,
-        scale=scale,
-        n_steps=walk_steps,
-    )
-    if not moved and sampler.zero_move_policy == "stop":
+    if not moved and zero_move_policy == "stop":
         return ConstrainedAttempt(
             None,
             "srwalk_stalled",
@@ -1095,7 +1088,7 @@ def draw_srwalk_constrained(
             n_valid,
             n_accepted,
             0,
-            walk_steps,
+            n_steps,
             srwalk_factorization_seconds=factorization_seconds,
             srwalk_proposal_seconds=proposal_seconds,
             srwalk_squared_displacement=0.0,
@@ -1107,13 +1100,125 @@ def draw_srwalk_constrained(
         n_valid,
         n_accepted,
         int(moved),
-        walk_steps,
+        n_steps,
         srwalk_factorization_seconds=factorization_seconds,
         srwalk_proposal_seconds=proposal_seconds,
         srwalk_squared_displacement=float(
             np.sum((current_theta - starting.theta) ** 2)
         ),
     )
+
+
+def draw_srwalk_constrained(
+    *,
+    evaluator: BatchEvaluator,
+    live_theta: NDArray[np.float64],
+    live_log_likelihood: NDArray[np.float64],
+    live_log_prior: NDArray[np.float64],
+    live_log_q0: NDArray[np.float64],
+    live_log_psi0: NDArray[np.float64],
+    live_tie_breakers: NDArray[np.float64],
+    worst: int,
+    threshold: float,
+    threshold_tie_breaker: float,
+    tie_policy: TiePolicy,
+    sampler: SRWalkSampler,
+    rng: np.random.Generator,
+    max_proposals: int,
+    max_likelihood_calls: int | None,
+    deadline: float | None,
+    proposal_factor: NDArray[np.float64] | None = None,
+) -> ConstrainedAttempt:
+    """Evolve a survivor with Gaussian MH targeting constrained fixed ``q0``.
+
+    The discarded point defines the constraint but is never a chain state. The
+    regularized survivor covariance and adaptive scale are frozen for all
+    ``n_steps`` transitions in this replacement. Each valid symmetric proposal
+    is accepted with the fixed-importance ratio ``q0(proposed) / q0(current)``.
+    """
+    _validate_live_arrays(
+        evaluator=evaluator,
+        live_theta=live_theta,
+        live_log_likelihood=live_log_likelihood,
+        live_log_prior=live_log_prior,
+        live_log_q0=live_log_q0,
+        live_log_psi0=live_log_psi0,
+        live_tie_breakers=live_tie_breakers,
+    )
+    walk_steps = sampler.n_steps
+    failure = _preflight_failure(
+        evaluator=evaluator,
+        required_proposals=walk_steps,
+        max_proposals=max_proposals,
+        # Prior-first evaluation makes this an upper bound rather than an
+        # exact likelihood-call requirement. The loop enforces the hard limit.
+        max_likelihood_calls=None,
+        deadline=deadline,
+    )
+    if failure is not None:
+        return ConstrainedAttempt(None, failure, 0, 0)
+    starting = prepare_srwalk_start(
+        live_theta=live_theta,
+        live_log_likelihood=live_log_likelihood,
+        live_log_prior=live_log_prior,
+        live_log_q0=live_log_q0,
+        live_log_psi0=live_log_psi0,
+        live_tie_breakers=live_tie_breakers,
+        worst=worst,
+        threshold=threshold,
+        threshold_tie_breaker=threshold_tie_breaker,
+        tie_policy=tie_policy,
+        rng=rng,
+    )
+    if starting is None:
+        return ConstrainedAttempt(None, "insufficient_eligible_survivors", 0, 0)
+    factorization_start = time.perf_counter() if evaluator.profile else 0.0
+    if proposal_factor is None:
+        survivors = np.concatenate((live_theta[:worst], live_theta[worst + 1 :]))
+        factor = covariance_factor(
+            survivors,
+            shrinkage=sampler.covariance_shrinkage,
+            jitter=sampler.covariance_jitter,
+        )
+    else:
+        factor = np.asarray(proposal_factor, dtype=float)
+        if factor.shape != (evaluator.ndim, evaluator.ndim):
+            raise NumericalInvariantError("prepared s-rwalk factor has the wrong shape")
+        if not np.all(np.isfinite(factor)):
+            raise NumericalInvariantError(
+                "prepared s-rwalk factor contains NaN or infinity"
+            )
+    factorization_seconds = (
+        time.perf_counter() - factorization_start
+        if evaluator.profile and proposal_factor is None
+        else 0.0
+    )
+    scale = sampler.scale
+    attempt = evolve_srwalk_constrained(
+        evaluator=evaluator,
+        starting=starting,
+        threshold=threshold,
+        threshold_tie_breaker=threshold_tie_breaker,
+        tie_policy=tie_policy,
+        proposal_factor=factor,
+        scale=scale,
+        n_steps=walk_steps,
+        zero_move_policy=sampler.zero_move_policy,
+        max_proposals=max_proposals,
+        max_likelihood_calls=max_likelihood_calls,
+        deadline=deadline,
+        rng=rng,
+        factorization_seconds=factorization_seconds,
+    )
+    if attempt.n_completed == walk_steps and (
+        attempt.draw is not None or attempt.reason == "srwalk_stalled"
+    ):
+        sampler.record_completed_walk(
+            accept=attempt.n_accepted,
+            scale=scale,
+            n_steps=walk_steps,
+        )
+    return attempt
 
 
 _ENSEMBLE_MOVE_NAMES: tuple[EnsembleMoveName, ...] = (
