@@ -163,6 +163,71 @@ def test_truncated_normal_stationarity_requires_q0_mh_ratio(
     assert ks_distance < 0.07
 
 
+@pytest.mark.parametrize(
+    ("kernel", "settings"),
+    [
+        (draw_rwalk_constrained, RWalkSettings(walks=24)),
+        (
+            draw_srwalk_constrained,
+            SRWalkSettings(n_steps=24, dynamic_steps=False),
+        ),
+    ],
+)
+def test_random_walks_target_power_diffused_normal(
+    kernel: Kernel,
+    settings: RWalkSettings | SRWalkSettings,
+) -> None:
+    proposal = StandardNormalProposal()
+    beta = 0.5
+    log_z_beta = 0.5 * ((1.0 - beta) * np.log(2.0 * np.pi) - np.log(beta))
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda theta: np.zeros(len(theta)),
+        log_prior_fn=proposal.log_prob,
+    )
+    rng = np.random.default_rng(20260826)
+    output = []
+    for _ in range(400):
+        live_values = rng.normal(scale=np.sqrt(1.0 / beta), size=18)
+        live_theta = live_values[:, np.newaxis]
+        log_q0 = _normal_log_density(live_values)
+        log_psi = (1.0 - beta) * log_q0 + log_z_beta
+        if isinstance(settings, RWalkSettings):
+            kernel_setting = {"sampler": RWalkSampler(settings=settings, ndim=1)}
+        else:
+            kernel_setting = {"sampler": SRWalkSampler(settings=settings, ndim=1)}
+        attempt = kernel(
+            evaluator=BatchEvaluator(
+                model,
+                proposal,
+                beta=beta,
+                log_z_beta=log_z_beta,
+            ),
+            live_theta=live_theta,
+            live_log_likelihood=np.zeros(len(live_values)),
+            live_log_prior=log_q0,
+            live_log_q0=log_q0,
+            live_log_psi0=log_psi,
+            live_tie_breakers=np.zeros(len(live_values)),
+            worst=0,
+            threshold=-np.inf,
+            threshold_tie_breaker=0.0,
+            tie_policy="strict",
+            **kernel_setting,
+            rng=rng,
+            max_proposals=24,
+            max_likelihood_calls=None,
+            deadline=None,
+        )
+        assert attempt.draw is not None
+        output.append(attempt.draw.point.theta[0])
+
+    values = np.asarray(output)
+    assert np.mean(values) == pytest.approx(0.0, abs=0.14)
+    assert np.var(values) == pytest.approx(1.0 / beta, abs=0.3)
+
+
 class _CorrelatedNormalProposal:
     ndim = 2
     covariance = np.array([[1.0, 0.75], [0.75, 1.5]])

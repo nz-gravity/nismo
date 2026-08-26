@@ -147,6 +147,8 @@ class BatchEvaluator:
         model: Model,
         importance_morph: Proposal,
         *,
+        beta: float = 1.0,
+        log_z_beta: float = 0.0,
         profile: bool = False,
     ) -> None:
         if model.ndim != importance_morph.ndim:
@@ -157,6 +159,12 @@ class BatchEvaluator:
         self.model = model
         self.importance_morph = importance_morph
         self.ndim = model.ndim
+        self.beta = float(beta)
+        self.log_z_beta = float(log_z_beta)
+        if not np.isfinite(self.beta) or not 0.0 < self.beta <= 1.0:
+            raise ValueError("beta must be finite and in (0, 1]")
+        if not np.isfinite(self.log_z_beta):
+            raise ValueError("log_z_beta must be finite")
         self.n_likelihood_calls = 0
         self.n_prior_calls = 0
         self.outside_prior = 0
@@ -276,7 +284,7 @@ class BatchEvaluator:
 
         log_psi0 = np.full(n_points, -np.inf, dtype=float)
         valid = finite_numerator & np.isfinite(log_q0)
-        log_psi0[valid] = numerator[valid] - log_q0[valid]
+        log_psi0[valid] = numerator[valid] - self.beta * log_q0[valid] + self.log_z_beta
         if np.any(np.isnan(log_psi0)) or np.any(np.isposinf(log_psi0)):
             raise InvalidModelOutput("log_psi0 is NaN or +infinity")
 
@@ -351,7 +359,7 @@ class BatchEvaluator:
             )
 
         if np.isfinite(numerator) and np.isfinite(log_q0):
-            log_psi0 = numerator - log_q0
+            log_psi0 = numerator - self.beta * log_q0 + self.log_z_beta
         else:
             log_psi0 = -np.inf
         if np.isnan(log_psi0) or np.isposinf(log_psi0):

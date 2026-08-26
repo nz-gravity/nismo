@@ -9,7 +9,7 @@ reevaluating the model.
 | Field | Meaning |
 |---|---|
 | `logz` | Natural logarithm of the evidence, including the final live correction |
-| `logzerr` | Theoretical nested-sampling approximation `sqrt(information / nlive)` |
+| `logzerr` | Nested-sampling error, combined in quadrature with the direct-Monte-Carlo `log(C_beta)` error when `beta < 1` |
 | `information` | Estimated nested-sampling information |
 | `success` | `True` only for scientific stopping |
 | `termination_reason` | Scientific stop or hard-limit reason |
@@ -38,6 +38,8 @@ points = result.all_points
 log_weights = result.log_posterior_weights
 weights = result.posterior_weights
 log_psi0 = result.all_log_psi0
+log_psi_beta = result.all_log_psi_beta
+log_g_beta = result.all_log_g_beta
 ```
 
 `weights` sums to one. The separated arrays retain likelihood, prior, fixed
@@ -49,6 +51,17 @@ importance density, pseudo-likelihood, volume/weight, and tie-breaker values:
   `final_live_log_q0`, `final_live_log_psi0`, `final_live_tie_breakers`.
 
 Parameter-column names are retained as `result.parameter_names`.
+
+The historical `log_psi0` arrays retain their names for backward
+compatibility; their stored values are `log_psi_beta` when tempering is active.
+The explicit `dead_log_psi_beta`, `final_live_log_psi_beta`, and
+`all_log_psi_beta` aliases are available for new code. `all_log_g_beta`
+contains `beta * all_log_q0 - log_z_beta`.
+
+`result.beta_diagnostics` records `beta`, `log_z_beta`, its direct-Monte-Carlo
+standard error, the number of candidate draws, normalizer-estimate ESS, pool
+size, and whether normalization was exact. At `beta=1`, `log_z_beta=0` exactly
+and no Monte Carlo candidates are drawn.
 
 Equal-weight output is available when required:
 

@@ -591,12 +591,14 @@ def log_q0_acceptance_ratio(
     *,
     current_log_q0: float,
     proposed_log_q0: float,
+    beta: float = 1.0,
 ) -> float:
-    """Return the symmetric-proposal MH log ratio for constrained ``q0``."""
+    """Return the symmetric-proposal MH log ratio for constrained ``q0**beta``."""
     return log_metropolis_acceptance_ratio(
         current_log_q0=current_log_q0,
         proposed_log_q0=proposed_log_q0,
         log_hastings_ratio=0.0,
+        beta=beta,
     )
 
 
@@ -605,8 +607,9 @@ def log_metropolis_acceptance_ratio(
     current_log_q0: float,
     proposed_log_q0: float,
     log_hastings_ratio: float = 0.0,
+    beta: float = 1.0,
 ) -> float:
-    """Return the general fixed-``q0`` Metropolis--Hastings log ratio."""
+    """Return the general fixed-``q0**beta`` Metropolis--Hastings log ratio."""
     if not np.isfinite(current_log_q0):
         raise NumericalInvariantError(
             "an eligible MCMC starting state must have finite log_q0"
@@ -615,11 +618,13 @@ def log_metropolis_acceptance_ratio(
         raise NumericalInvariantError("an MCMC proposal has invalid log_q0")
     if np.isnan(log_hastings_ratio) or np.isposinf(log_hastings_ratio):
         raise NumericalInvariantError("an MCMC proposal has invalid Hastings ratio")
+    if not np.isfinite(beta) or not 0.0 < beta <= 1.0:
+        raise NumericalInvariantError("MCMC beta must be finite and in (0, 1]")
     if np.isneginf(proposed_log_q0) or np.isneginf(log_hastings_ratio):
         return -np.inf
     return min(
         0.0,
-        proposed_log_q0 - current_log_q0 + log_hastings_ratio,
+        beta * (proposed_log_q0 - current_log_q0) + log_hastings_ratio,
     )
 
 
@@ -628,13 +633,15 @@ def accepts_metropolis(
     current_log_q0: float,
     proposed_log_q0: float,
     log_hastings_ratio: float,
+    beta: float = 1.0,
     rng: np.random.Generator,
 ) -> bool:
-    """Draw a fixed-``q0`` Metropolis--Hastings decision in log space."""
+    """Draw a fixed-``q0**beta`` Metropolis--Hastings decision in log space."""
     log_alpha = log_metropolis_acceptance_ratio(
         current_log_q0=current_log_q0,
         proposed_log_q0=proposed_log_q0,
         log_hastings_ratio=log_hastings_ratio,
+        beta=beta,
     )
     return bool(np.log(rng.random()) < log_alpha)
 
@@ -643,13 +650,15 @@ def accepts_log_q0_metropolis(
     *,
     current_log_q0: float,
     proposed_log_q0: float,
+    beta: float = 1.0,
     rng: np.random.Generator,
 ) -> bool:
-    """Draw the exact fixed-``q0`` Metropolis decision in log space."""
+    """Draw the exact fixed-``q0**beta`` Metropolis decision in log space."""
     return accepts_metropolis(
         current_log_q0=current_log_q0,
         proposed_log_q0=proposed_log_q0,
         log_hastings_ratio=0.0,
+        beta=beta,
         rng=rng,
     )
 
@@ -911,6 +920,7 @@ def draw_rwalk_constrained(
         if accepts_log_q0_metropolis(
             current_log_q0=current.log_q0,
             proposed_log_q0=proposal_log_q0,
+            beta=evaluator.beta,
             rng=rng,
         ):
             current = EvaluatedPoint(
@@ -1060,6 +1070,7 @@ def evolve_srwalk_constrained(
         if accepts_log_q0_metropolis(
             current_log_q0=current_log_q0,
             proposed_log_q0=proposal_log_q0,
+            beta=evaluator.beta,
             rng=rng,
         ):
             current_theta = proposal_theta
@@ -1535,6 +1546,7 @@ def draw_ensemble_rwalk_constrained(
                     current_log_q0=float(ensemble_log_q0[walker]),
                     proposed_log_q0=float(batch.log_q0[row]),
                     log_hastings_ratio=float(proposal.log_hastings_ratio[row]),
+                    beta=evaluator.beta,
                     rng=rng,
                 ):
                     continue

@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Added power-tempering support for `mor-rwalk` and `s-rwalk`. `beta=1`
+  preserves the standard sampler, while `0 < beta < 1` targets normalized
+  `q0**beta`, estimates its normalizing constant by direct Monte Carlo, builds
+  an importance-resampled initial pool, and propagates the diffused target
+  through serial and worker-side random-walk acceptance. Results expose the
+  normalizer estimate, Monte Carlo error, and effective sample size.
 - Matched Dynesty's replacement-pool architecture: synchronous ordered queue
   epochs, coordinator-prepared `s-rwalk` starts and geometry, deterministic
   per-job seeds, process-initialized model/importance caches, `chunksize=1`,

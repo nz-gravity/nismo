@@ -88,6 +88,15 @@ def _shrinkage(value: object, *, name: str) -> float:
     return number
 
 
+def _power_beta(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ConfigurationError("beta must be finite and in (0, 1]")
+    number = float(value)
+    if not np.isfinite(number) or not 0.0 < number <= 1.0:
+        raise ConfigurationError("beta must be finite and in (0, 1]")
+    return number
+
+
 @dataclass(frozen=True, slots=True)
 class EnsembleMoveWeights:
     """Relative weights for the ``en-rwalk`` proposal mixture."""
@@ -401,6 +410,13 @@ class NISMOConfig:
         Metropolis replacement kernels.
     proposal_update_interval
         Completed-iteration interval between adaptive Morph refit attempts.
+    beta
+        Power applied to the fixed importance density. ``1`` preserves the
+        ordinary NISMO density; values in ``(0, 1)`` are supported by the
+        ``mor-rwalk`` and ``s-rwalk`` schemes.
+    beta_mc_samples
+        Direct-Monte-Carlo candidate count used to normalize and initialize a
+        power-tempered importance density.
     srwalk_settings
         Gaussian-covariance random-walk Metropolis settings.
     mor_rwalk_settings
@@ -427,6 +443,8 @@ class NISMOConfig:
     proposal_batch_size: int = 64
     proposal_scheme: ProposalScheme = "fixed_morph"
     proposal_update_interval: int = 25
+    beta: float = 1.0
+    beta_mc_samples: int = 100_000
     rwalk_settings: RWalkSettings = field(
         default_factory=RWalkSettings,
         init=False,
@@ -479,6 +497,7 @@ class NISMOConfig:
         for name in (
             "proposal_batch_size",
             "proposal_update_interval",
+            "beta_mc_samples",
             "max_iterations",
             "max_proposals_per_replacement",
         ):
@@ -494,6 +513,13 @@ class NISMOConfig:
         ):
             raise ConfigurationError(
                 f"unsupported proposal_scheme: {self.proposal_scheme!r}"
+            )
+        beta = _power_beta(self.beta)
+        object.__setattr__(self, "beta", beta)
+        if beta < 1.0 and self.proposal_scheme not in ("mor-rwalk", "s-rwalk"):
+            raise ConfigurationError(
+                "beta < 1 is supported only with proposal_scheme='mor-rwalk' "
+                "or 's-rwalk'"
             )
         if not isinstance(self.rwalk_settings, RWalkSettings):
             raise ConfigurationError("rwalk_settings must be an RWalkSettings")
@@ -511,6 +537,16 @@ class NISMOConfig:
                 raise ConfigurationError("mor-rwalk requires mor_rwalk_settings")
             if self.mor_rwalk_settings.n_proposals < self.n_live:
                 raise ConfigurationError("mor-rwalk n_proposals must be >= n_live")
+        tempered_pool_size = (
+            self.mor_rwalk_settings.n_proposals
+            if self.proposal_scheme == "mor-rwalk"
+            and self.mor_rwalk_settings is not None
+            else self.n_live
+        )
+        if beta < 1.0 and self.beta_mc_samples < tempered_pool_size:
+            raise ConfigurationError(
+                "beta_mc_samples must be >= the initial tempered pool size"
+            )
         if not isinstance(
             self.ensemble_rwalk_settings,
             EnsembleRWalkSettings,

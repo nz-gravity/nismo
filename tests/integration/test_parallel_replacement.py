@@ -179,6 +179,37 @@ def test_mor_rwalk_switches_to_parallel_srwalk_queue() -> None:
     assert result.n_likelihood_calls == 11 + diagnostics.prefetch_likelihood_calls
 
 
+def test_beta_mor_rwalk_propagates_diffused_target_to_parallel_workers() -> None:
+    results = [
+        NISMOSampler(
+            model=ConstantNormalModel(),
+            importance_morph=StandardNormalProposal(),
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=MORWalkSettings(n_proposals=12),
+            srwalk_settings=SRWalkSettings(n_steps=4, dynamic_steps=False),
+            beta=0.8,
+            beta_mc_samples=1_000,
+            n_live=10,
+            rng=20260826,
+            tie_policy="randomized_plateau",
+            n_workers=2,
+            queue_size=2,
+        ).run(
+            dlogz=0.5,
+            max_iterations=100,
+            max_proposals_per_replacement=20,
+        )
+        for _ in range(2)
+    ]
+    first, second = results
+
+    assert first.config.beta == 0.8
+    assert first.queue_diagnostics.queue_candidates_consumed > 0
+    assert np.any(first.history.mcmc_completed > 0)
+    np.testing.assert_array_equal(first.dead_points, second.dead_points)
+    assert first.beta_diagnostics == second.beta_diagnostics
+
+
 def test_parallel_srwalk_freezes_then_propagates_dynamic_epoch_length() -> None:
     result = NISMOSampler(
         model=ConstantUniformModel(),

@@ -73,6 +73,11 @@ from .stopping import (
     calculate_stopping_metrics,
     evaluate_stopping_policy,
 )
+from .tempering import (
+    BetaTemperingDiagnostics,
+    exact_beta_diagnostics,
+    sample_power_tempered_pool,
+)
 
 
 def _as_generator(
@@ -333,6 +338,13 @@ class NISMOSampler:
         invariant under the fixed importance density.
     proposal_update_interval
         Completed iterations between adaptive proposal refits.
+    beta
+        Power-tempering exponent for the fixed importance density. ``1`` is
+        the existing NISMO behavior; ``0 < beta < 1`` diffuses ``q0`` for
+        ``mor-rwalk`` and ``s-rwalk``.
+    beta_mc_samples
+        Direct-Monte-Carlo candidates used to estimate ``z_beta`` and build
+        the initial power-tempered pool.
     n_live
         Static live-point count, at least two.
     rng
@@ -368,6 +380,8 @@ class NISMOSampler:
         importance_morph: Proposal,
         proposal_scheme: ProposalScheme = "fixed_morph",
         proposal_update_interval: int = 25,
+        beta: float = 1.0,
+        beta_mc_samples: int = 100_000,
         n_live: int,
         rng: int | np.random.Generator,
         proposal_batch_size: int = 64,
@@ -397,6 +411,8 @@ class NISMOSampler:
         self.adaptive_proposal_controller: AdaptiveMorphController | None = None
         self.proposal_scheme = proposal_scheme
         self.proposal_update_interval = proposal_update_interval
+        self.beta = beta
+        self.beta_mc_samples = beta_mc_samples
         self.n_live = n_live
         self.rng = _as_generator(rng)
         self.proposal_batch_size = proposal_batch_size
@@ -424,6 +440,8 @@ class NISMOSampler:
             proposal_batch_size=proposal_batch_size,
             proposal_scheme=proposal_scheme,
             proposal_update_interval=proposal_update_interval,
+            beta=beta,
+            beta_mc_samples=beta_mc_samples,
             tie_policy=tie_policy,
             srwalk_settings=self.srwalk_settings,
             mor_rwalk_settings=self.mor_rwalk_settings,
@@ -456,6 +474,8 @@ class NISMOSampler:
         proposal_batch_size: int = 64,
         proposal_scheme: ProposalScheme = "fixed_morph",
         proposal_update_interval: int = 25,
+        beta: float = 1.0,
+        beta_mc_samples: int = 100_000,
         tie_policy: TiePolicy = "strict",
         srwalk_settings: SRWalkSettings | None = None,
         mor_rwalk_settings: MORWalkSettings | None = None,
@@ -483,6 +503,8 @@ class NISMOSampler:
             proposal_batch_size=proposal_batch_size,
             proposal_scheme=proposal_scheme,
             proposal_update_interval=proposal_update_interval,
+            beta=beta,
+            beta_mc_samples=beta_mc_samples,
             tie_policy=tie_policy,
             srwalk_settings=srwalk_settings,
             mor_rwalk_settings=mor_rwalk_settings,
@@ -552,6 +574,8 @@ class NISMOSampler:
             proposal_batch_size=self.proposal_batch_size,
             proposal_scheme=self.proposal_scheme,
             proposal_update_interval=self.proposal_update_interval,
+            beta=self.beta,
+            beta_mc_samples=self.beta_mc_samples,
             srwalk_settings=self.srwalk_settings,
             mor_rwalk_settings=self.mor_rwalk_settings,
             ensemble_rwalk_settings=self.ensemble_rwalk_settings,
@@ -575,14 +599,6 @@ class NISMOSampler:
         start = time.monotonic()
         deadline = None if max_wall_time is None else start + max_wall_time
         initial_state = copy.deepcopy(self.rng.bit_generator.state)
-        evaluator = BatchEvaluator(
-            self.model,
-            self.importance_morph,
-            profile=(
-                config.proposal_scheme in ("s-rwalk", "mor-rwalk")
-                and config.srwalk_settings.profile
-            ),
-        )
         self.proposal_morph = self.importance_morph
         self.adaptive_proposal_controller = None
         srwalk_sampler = (
@@ -604,20 +620,49 @@ class NISMOSampler:
             )
 
         morph_pool: _MorphReplacementPool | None = None
+        beta_diagnostics: BetaTemperingDiagnostics
         try:
+            prepared_theta: NDArray[np.float64] | None = None
+            if config.proposal_scheme == "mor-rwalk":
+                settings = config.mor_rwalk_settings
+                if settings is None:  # pragma: no cover - config validates this
+                    raise RuntimeError("mor-rwalk settings were not resolved")
+                prepared_theta, beta_diagnostics = sample_power_tempered_pool(
+                    self.importance_morph,
+                    beta=config.beta,
+                    pool_size=settings.n_proposals,
+                    n_mc_samples=config.beta_mc_samples,
+                    rng=self.rng,
+                )
+            elif config.beta < 1.0:
+                prepared_theta, beta_diagnostics = sample_power_tempered_pool(
+                    self.importance_morph,
+                    beta=config.beta,
+                    pool_size=self.n_live,
+                    n_mc_samples=config.beta_mc_samples,
+                    rng=self.rng,
+                )
+            else:
+                beta_diagnostics = exact_beta_diagnostics(pool_size=self.n_live)
+
+            evaluator = BatchEvaluator(
+                self.model,
+                self.importance_morph,
+                beta=config.beta,
+                log_z_beta=beta_diagnostics.log_z_beta,
+                profile=(
+                    config.proposal_scheme in ("s-rwalk", "mor-rwalk")
+                    and config.srwalk_settings.profile
+                ),
+            )
             if config.proposal_scheme == "mor-rwalk":
                 settings = config.mor_rwalk_settings
                 if settings is None:  # pragma: no cover - config validates this
                     raise RuntimeError("mor-rwalk settings were not resolved")
                 pool_size = settings.n_proposals
-                all_theta = np.array(
-                    validate_proposal_sample(
-                        self.importance_morph.sample(pool_size, self.rng),
-                        n=pool_size,
-                        ndim=self.model.ndim,
-                    ),
-                    copy=True,
-                )
+                if prepared_theta is None:  # pragma: no cover - prepared above
+                    raise RuntimeError("mor-rwalk tempered pool was not prepared")
+                all_theta = prepared_theta
                 initial = evaluator.evaluate(all_theta)
                 all_tie_breakers = self.rng.random(pool_size)
                 randomized_indices = np.asarray(
@@ -647,14 +692,17 @@ class NISMOSampler:
                     tie_breakers=all_tie_breakers,
                 )
             else:
-                live_theta = np.array(
-                    validate_proposal_sample(
-                        self.importance_morph.sample(self.n_live, self.rng),
-                        n=self.n_live,
-                        ndim=self.model.ndim,
-                    ),
-                    copy=True,
-                )
+                if prepared_theta is None:
+                    live_theta = np.array(
+                        validate_proposal_sample(
+                            self.importance_morph.sample(self.n_live, self.rng),
+                            n=self.n_live,
+                            ndim=self.model.ndim,
+                        ),
+                        copy=True,
+                    )
+                else:
+                    live_theta = prepared_theta
                 initial = evaluator.evaluate(live_theta)
                 live_log_likelihood = np.array(initial.log_likelihood, copy=True)
                 live_log_prior = np.array(initial.log_prior, copy=True)
@@ -731,6 +779,7 @@ class NISMOSampler:
             config=config,
             model=worker_model,
             importance_morph=self.importance_morph,
+            log_z_beta=beta_diagnostics.log_z_beta,
         )
         # Dynesty initializes the function cache in both workers and the
         # coordinator. This also keeps direct map-compatible calls testable.
@@ -1212,7 +1261,12 @@ class NISMOSampler:
                 live_log_psi=live_log_psi0,
                 logz_total=logz_total,
             )
-            logzerr = float(np.sqrt(information / self.n_live))
+            logzerr = float(
+                np.hypot(
+                    np.sqrt(information / self.n_live),
+                    beta_diagnostics.log_z_beta_error,
+                )
+            )
             stability_history = (
                 *history_logz_total[-(stopping_policy.stability_window - 1) :],
                 logz_total,
@@ -1457,6 +1511,14 @@ class NISMOSampler:
         )
         success = termination_reason in SCIENTIFIC_TERMINATION_REASONS
         warnings: list[str] = []
+        if (
+            config.beta < 1.0
+            and beta_diagnostics.mc_effective_sample_size < beta_diagnostics.pool_size
+        ):
+            warnings.append(
+                "beta Monte Carlo ESS is below the requested tempered-pool "
+                "size; increase beta_mc_samples or use a beta closer to one."
+            )
         if config.tie_policy == "randomized_plateau":
             warnings.append(
                 "randomized_plateau augments the pseudo-prior with stored "
@@ -1488,7 +1550,12 @@ class NISMOSampler:
         ndim = self.model.ndim
         result = NISMOResult(
             logz=quadrature.logz,
-            logzerr=quadrature.logzerr,
+            logzerr=float(
+                np.hypot(
+                    quadrature.logzerr,
+                    beta_diagnostics.log_z_beta_error,
+                )
+            ),
             information=quadrature.information,
             success=success,
             termination_reason=termination_reason,
@@ -1515,6 +1582,7 @@ class NISMOSampler:
             log_posterior_weights=quadrature.log_posterior_weights,
             history=history,
             config=config,
+            beta_diagnostics=beta_diagnostics,
             rng_bit_generator=self.rng.bit_generator.__class__.__name__,
             rng_state_initial=repr(initial_state),
             rng_state_final=repr(final_state),

@@ -99,6 +99,9 @@ def test_rng_reproducibility_is_explicit() -> None:
         ({"n_live": 2, "dlogz": 0.0}, "dlogz"),
         ({"n_live": 2, "proposal_batch_size": 0}, "proposal_batch_size"),
         ({"n_live": 2, "proposal_update_interval": 0}, "proposal_update_interval"),
+        ({"n_live": 2, "beta": 0.0}, "beta"),
+        ({"n_live": 2, "beta": 1.1}, "beta"),
+        ({"n_live": 2, "beta_mc_samples": 0}, "beta_mc_samples"),
         ({"n_live": 2, "proposal_scheme": "slice"}, "proposal_scheme"),
         ({"n_live": 5, "max_likelihood_calls": 4}, "max_likelihood_calls"),
         ({"n_live": 2, "tie_policy": "jitter"}, "tie_policy"),
@@ -134,3 +137,16 @@ def test_adaptive_scheme_requires_refittable_importance_morph() -> None:
             n_live=4,
             rng=1,
         )
+
+
+def test_diffused_beta_is_limited_to_mor_and_s_rwalk() -> None:
+    with pytest.raises(ConfigurationError, match="supported only"):
+        NISMOConfig(n_live=4, proposal_scheme="fixed_morph", beta=0.8)
+
+    srwalk = NISMOConfig(
+        n_live=4,
+        proposal_scheme="s-rwalk",
+        beta=0.8,
+        beta_mc_samples=20,
+    )
+    assert srwalk.beta == 0.8

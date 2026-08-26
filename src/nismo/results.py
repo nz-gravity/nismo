@@ -17,6 +17,7 @@ from .proposals import MorphMetadata
 from .quadrature import live_log_contributions
 from .replacement import QueueDiagnostics
 from .stopping import SCIENTIFIC_TERMINATION_REASONS
+from .tempering import BetaTemperingDiagnostics
 
 
 def _readonly(
@@ -252,6 +253,7 @@ class NISMOResult:
     log_posterior_weights: NDArray[np.float64]
     history: RunHistory
     config: NISMOConfig
+    beta_diagnostics: BetaTemperingDiagnostics
     rng_bit_generator: str
     rng_state_initial: str
     rng_state_final: str
@@ -266,6 +268,10 @@ class NISMOResult:
     def __post_init__(self) -> None:
         if self.nlive != self.config.n_live:
             raise ValueError("nlive must equal config.n_live")
+        if not isinstance(self.beta_diagnostics, BetaTemperingDiagnostics):
+            raise ValueError("beta_diagnostics must be a BetaTemperingDiagnostics")
+        if self.beta_diagnostics.beta != self.config.beta:
+            raise ValueError("beta diagnostics must match config.beta")
         if not isinstance(self.queue_diagnostics, QueueDiagnostics):
             raise ValueError("queue_diagnostics must be a QueueDiagnostics")
         if self.niter < 0 or self.niter != len(self.dead_log_psi0):
@@ -395,8 +401,31 @@ class NISMOResult:
 
     @property
     def all_log_psi0(self) -> NDArray[np.float64]:
-        """Return dead then final-live fixed-importance pseudo-likelihoods."""
+        """Return dead then final-live active-importance pseudo-likelihoods."""
         values = np.concatenate((self.dead_log_psi0, self.final_live_log_psi0))
+        values.setflags(write=False)
+        return values
+
+    @property
+    def dead_log_psi_beta(self) -> NDArray[np.float64]:
+        """Return dead-point pseudo-likelihoods for the configured ``beta``."""
+        return self.dead_log_psi0
+
+    @property
+    def final_live_log_psi_beta(self) -> NDArray[np.float64]:
+        """Return final-live pseudo-likelihoods for the configured ``beta``."""
+        return self.final_live_log_psi0
+
+    @property
+    def all_log_psi_beta(self) -> NDArray[np.float64]:
+        """Return all pseudo-likelihoods for the configured ``beta``."""
+        return self.all_log_psi0
+
+    @property
+    def all_log_g_beta(self) -> NDArray[np.float64]:
+        """Return the normalized power-tempered importance log density."""
+        log_q0 = np.concatenate((self.dead_log_q0, self.final_live_log_q0))
+        values = self.config.beta * log_q0 - self.beta_diagnostics.log_z_beta
         values.setflags(write=False)
         return values
 

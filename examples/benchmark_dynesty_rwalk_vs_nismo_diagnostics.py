@@ -756,6 +756,7 @@ def run_nismo(
         EnsembleMoveWeights,
         EnsembleRWalkSettings,
         NISMOSampler,
+        ParallelSettings,
         SRWalkSettings,
     )
 

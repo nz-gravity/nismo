@@ -44,20 +44,28 @@ NISMO supports Python 3.10 or newer and is tested on Python 3.10–3.12.
 NISMO uses natural logarithms and batch arrays with shape `(n, ndim)`.
 For parameter point `theta`, the model supplies a likelihood `L(theta)` and a
 normalized prior `pi(theta)`. A fixed normalized importance density `q0(theta)`
-defines
+and `0 < beta <= 1` define
 
 ```text
-log_psi0 = log_likelihood + log_prior - log_q0
+g_beta(theta) = q0(theta)**beta / C_beta
+log_psi_beta = log_likelihood + log_prior - beta * log_q0 + log_C_beta
 ```
+
+`beta=1` is the standard sampler and has `C_beta=1` exactly. For `beta<1`,
+NISMO estimates `C_beta` by direct Monte Carlo and initializes `mor-rwalk` or
+`s-rwalk` from a finite importance-resampled candidate batch. Their random-walk
+MH correction targets the same diffused `q0**beta` density.
 
 The importance density must have support everywhere that `L * pi` is nonzero.
 NISMO cannot diagnose a mode that is absent from both the importance fit and
 the live population. Missing support can therefore bias the evidence and
 posterior without producing a numerical error.
 
-The sampler uses deterministic prior-volume shrinkage. `result.logzerr` is the
-standard theoretical nested-sampling approximation `sqrt(H / n_live)`, not a
-complete error budget. It does not cover an imperfect Morph fit, missing modes,
-correlated finite-length walks, or the heuristic adaptive proposal. Calibrate
-the full procedure with repeated seeds and known benchmarks appropriate to the
-target problem.
+The sampler uses deterministic prior-volume shrinkage. For `beta<1`,
+`result.logzerr` combines the standard theoretical nested-sampling
+approximation `sqrt(H / n_live)` with the estimated Monte Carlo uncertainty in
+`log_C_beta`. It remains an incomplete error budget: it does not cover an
+imperfect Morph fit, missing modes, finite-pool approximation, correlated
+finite-length walks, or the heuristic adaptive proposal. Calibrate the full
+procedure with repeated seeds and known benchmarks appropriate to the target
+problem.
