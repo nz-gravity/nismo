@@ -693,8 +693,7 @@ def run_nismo(
         )
     elif proposal_scheme in ("s-rwalk", "mor-rwalk"):
         sampler_kwargs["srwalk_settings"] = SRWalkSettings(
-            n_steps=srwalk_steps,
-            dynamic_steps=True
+            n_steps=srwalk_steps, dynamic_steps=True
         )
         if proposal_scheme == "mor-rwalk":
             sampler_kwargs["mor_rwalk_settings"] = MORWalkSettings(
@@ -1237,9 +1236,10 @@ def plot_information_from_rows(
 
     if not grouped:
         raise RuntimeError(
-            "No posterior|prior information values could be recovered from raw_runs.csv. "
-            "New runs store information_post_prior directly; legacy NISMO rows "
-            "cannot be converted without their weighted sample arrays."
+            "No posterior|prior information values could be recovered from "
+            "raw_runs.csv. New runs store information_post_prior directly; "
+            "legacy NISMO rows cannot be converted without their weighted "
+            "sample arrays."
         )
 
     information_rows: list[dict[str, Any]] = []
@@ -1380,10 +1380,12 @@ def print_summary(summaries: list[dict[str, Any]]) -> None:
     )
     print("-" * 108)
     for row in summaries:
+        n_used = int(row.get("n_used", row["n_success"]))
+        n_requested = int(row["n_requested"])
         print(
             f"{row['method_label']:<22} "
             f"{int(row['nlive']):>7d} "
-            f"{int(row.get('n_used', row['n_success'])):>3d}/{int(row['n_requested']):<3d} "
+            f"{n_used:>3d}/{n_requested:<3d} "
             f"{float(row['logz_mean']):>13.5f} "
             f"{float(row['logz_std']):>10.5f} "
             f"{float(row['bias']):>10.5f} "
@@ -2119,7 +2121,7 @@ def main() -> int:
                     f"{statistics['logzerr']:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
-            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
+            except Exception as error:
                 failure = make_failure_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -2190,7 +2192,7 @@ def main() -> int:
                     f"{statistics['logzerr']:.5f}; "
                     f"ncall={statistics['ncall']:,}"
                 )
-            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
+            except Exception as error:
                 failure = make_failure_row(
                     method="dynesty_rwalk",
                     method_label="Dynesty (rwalk)",
@@ -2256,7 +2258,7 @@ def main() -> int:
                 top_k_greedy=args.top_k_greedy,
             )
             print(f"  Morph fit completed in {proposal_fit_time_s:.1f} s")
-        except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
+        except Exception as error:
             reason = "".join(
                 traceback.format_exception_only(type(error), error)
             ).strip()
@@ -2368,7 +2370,7 @@ def main() -> int:
                         "aggregate statistics.",
                         file=sys.stderr,
                     )
-            except Exception as error:  # noqa: BLE001 - keep benchmark campaign running
+            except Exception as error:
                 failure = make_failure_row(
                     method=nismo_method,
                     method_label=nismo_label,
