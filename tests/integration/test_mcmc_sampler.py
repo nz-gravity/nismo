@@ -204,6 +204,47 @@ def test_mor_rwalk_uses_one_morph_batch_then_switches_to_srwalk() -> None:
     )
 
 
+def test_mor_rwalk_beta_diffuses_pool_and_srwalk_target_reproducibly() -> None:
+    model, proposal = _constant_problem()
+    results = [
+        NISMOSampler(
+            model=model,
+            importance_morph=proposal,
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=MORWalkSettings(n_proposals=30),
+            srwalk_settings=SRWalkSettings(n_steps=8, dynamic_steps=False),
+            beta=0.8,
+            beta_mc_samples=4_000,
+            n_live=12,
+            rng=20260826,
+            tie_policy="randomized_plateau",
+        ).run(
+            dlogz=0.5,
+            max_iterations=100,
+            max_proposals_per_replacement=40,
+        )
+        for _ in range(2)
+    ]
+    first, second = results
+
+    assert first.config.beta == 0.8
+    assert not first.beta_diagnostics.normalization_exact
+    assert first.beta_diagnostics.n_mc_samples == 4_000
+    assert first.beta_diagnostics.mc_effective_sample_size > 1_000
+    expected_log_psi = (
+        first.dead_log_likelihood
+        + first.dead_log_prior
+        - first.config.beta * first.dead_log_q0
+        + first.beta_diagnostics.log_z_beta
+    )
+    np.testing.assert_allclose(first.dead_log_psi_beta, expected_log_psi)
+    assert np.all(np.diff(first.dead_log_psi_beta) >= 0.0)
+    assert np.any(first.history.mcmc_completed > 0)
+    assert first.logz == pytest.approx(np.log(2.5), abs=0.35)
+    np.testing.assert_array_equal(first.dead_points, second.dead_points)
+    assert first.beta_diagnostics == second.beta_diagnostics
+
+
 def test_srwalk_exposes_the_skilling_method_citation() -> None:
     model, proposal = _constant_problem()
     sampler = NISMOSampler(

@@ -92,6 +92,8 @@ def _save_weighted_samples(result: NISMOResult, output_path: Path) -> None:
         log_prior=log_prior,
         log_q0=log_q0,
         log_psi0=result.all_log_psi0,
+        log_g_beta=result.all_log_g_beta,
+        log_psi_beta=result.all_log_psi_beta,
         tie_breakers=tie_breakers,
         is_live=is_live,
     )
@@ -175,6 +177,7 @@ def _diagnostic_payload(
             "n_proposals": result.n_proposals,
         },
         "run_diagnostics": summarize(result),
+        "beta_tempering": result.beta_diagnostics,
         "queue_diagnostics": queue,
         "srwalk_diagnostics": result.srwalk_diagnostics,
         "ensemble_move_totals": ensemble_totals,

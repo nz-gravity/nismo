@@ -43,6 +43,7 @@ class ReplacementWorkerContext:
     config: NISMOConfig
     model: Model
     importance_morph: Proposal
+    log_z_beta: float = 0.0
 
 
 _WORKER_CONTEXT: ReplacementWorkerContext | None = None
@@ -365,6 +366,8 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
     evaluator = BatchEvaluator(
         context.model,
         context.importance_morph,
+        beta=context.config.beta,
+        log_z_beta=context.log_z_beta,
         profile=(
             context.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
             and context.config.srwalk_settings.profile
@@ -428,6 +431,8 @@ def build_srwalk_replacement(task: SRWalkTask) -> ReplacementResult:
     evaluator = BatchEvaluator(
         context.model,
         context.importance_morph,
+        beta=config.beta,
+        log_z_beta=context.log_z_beta,
         profile=config.srwalk_settings.profile,
     )
     attempt = evolve_srwalk_constrained(

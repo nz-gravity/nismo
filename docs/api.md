@@ -115,6 +115,8 @@ NISMOSampler(
     n_live,
     rng,
     proposal_batch_size=64,
+    beta=1.0,
+    beta_mc_samples=100_000,
     tie_policy="strict",
     srwalk_settings=None,
     mor_rwalk_settings=None,
@@ -136,6 +138,8 @@ NISMOSampler.from_posterior_samples(
     n_live,
     rng,
     proposal_batch_size=64,
+    beta=1.0,
+    beta_mc_samples=100_000,
     proposal_scheme="fixed_morph",
     proposal_update_interval=25,
     tie_policy="strict",
@@ -156,6 +160,11 @@ ordered synchronous-map design: each job returns one complete constrained
 candidate, while live-point and quadrature state remain serial.
 The legacy `parallel=ParallelSettings(...)` keyword remains available for
 backward compatibility and cannot be mixed with the direct arguments.
+
+`beta=1` is the unchanged standard sampler. For `0 < beta < 1`, `mor-rwalk`
+and `s-rwalk` target the normalized power density `q0**beta / C_beta`.
+`beta_mc_samples` controls the direct Monte Carlo estimate of `C_beta` and the
+candidate batch used to construct the initial diffused pool.
 
 Run method:
 
@@ -187,6 +196,8 @@ NISMOConfig(
     proposal_batch_size=64,
     proposal_scheme="fixed_morph",
     proposal_update_interval=25,
+    beta=1.0,
+    beta_mc_samples=100_000,
     srwalk_settings=SRWalkSettings(),
     mor_rwalk_settings=None,
     ensemble_rwalk_settings=EnsembleRWalkSettings(),
@@ -274,6 +285,7 @@ logz, logzerr, information, success, termination_reason
 niter, nlive, n_likelihood_calls, n_prior_calls, n_proposals
 rng_bit_generator, rng_state_initial, rng_state_final
 importance_morph_description, warnings, nonfinite_counts
+beta_diagnostics
 ```
 
 Array fields and record fields are documented in [results and
@@ -282,6 +294,8 @@ diagnostics](results.md). Convenience API:
 ```python
 result.all_points
 result.all_log_psi0
+result.all_log_psi_beta
+result.all_log_g_beta
 result.posterior_weights
 result.resample_equal(rng, n_samples=None)
 result.save(output_path, plots=True)
@@ -325,6 +339,7 @@ constructed by application code:
 - `ReplacementSnapshot`
 - `ReplacementResult`
 - `MorphMetadata`
+- `BetaTemperingDiagnostics`
 
 `ReplacementSnapshot` and `ReplacementResult` are exposed for advanced queue
 instrumentation; the coordinator owns their construction and consumption.

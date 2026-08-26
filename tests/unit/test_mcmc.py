@@ -86,6 +86,15 @@ def test_mor_rwalk_configuration_requires_a_large_enough_pool() -> None:
             max_likelihood_calls=7,
         )
 
+    with pytest.raises(ConfigurationError, match="beta_mc_samples"):
+        NISMOConfig(
+            n_live=5,
+            proposal_scheme="mor-rwalk",
+            mor_rwalk_settings=settings,
+            beta=0.8,
+            beta_mc_samples=7,
+        )
+
 
 @pytest.mark.parametrize("value", [0, True])
 def test_mor_rwalk_settings_reject_invalid_pool_sizes(value: object) -> None:
@@ -595,6 +604,20 @@ def test_general_metropolis_ratio_validates_and_applies_hastings_term() -> None:
                 proposed_log_q0=0.0,
                 log_hastings_ratio=invalid,
             )
+
+
+def test_power_tempered_metropolis_ratio_scales_log_q0_difference() -> None:
+    assert log_metropolis_acceptance_ratio(
+        current_log_q0=0.0,
+        proposed_log_q0=-2.0,
+        beta=0.25,
+    ) == pytest.approx(-0.5)
+    with pytest.raises(NumericalInvariantError, match="beta"):
+        log_metropolis_acceptance_ratio(
+            current_log_q0=0.0,
+            proposed_log_q0=-2.0,
+            beta=0.0,
+        )
 
 
 def test_stretch_hastings_term_can_change_the_acceptance_decision() -> None:

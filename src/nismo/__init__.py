@@ -45,8 +45,10 @@ from .results import (
 )
 from .sampler import NISMOSampler
 from .stopping import StoppingCriterionConfig, StoppingPolicy
+from .tempering import BetaTemperingDiagnostics
 
 __all__ = [
+    "BetaTemperingDiagnostics",
     "CallableModel",
     "ConfigurationError",
     "EnsembleMoveHistory",

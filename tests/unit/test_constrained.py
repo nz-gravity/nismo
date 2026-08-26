@@ -115,6 +115,28 @@ def test_evaluator_detects_proposal_support_failure() -> None:
         BatchEvaluator(model, proposal).evaluate(np.array([[0.5]]))
 
 
+def test_evaluator_uses_power_tempered_pseudo_likelihood() -> None:
+    class LinearLogProposal(UniformProposal):
+        def log_prob(self, theta: np.ndarray) -> np.ndarray:
+            return -2.0 * theta[:, 0]
+
+    proposal = LinearLogProposal()
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda theta: theta[:, 0],
+        log_prior_fn=lambda theta: -theta[:, 0],
+    )
+    evaluator = BatchEvaluator(
+        model,
+        proposal,
+        beta=0.75,
+        log_z_beta=0.3,
+    )
+    batch = evaluator.evaluate(np.array([[0.4]]))
+    assert batch.log_psi0[0] == pytest.approx(0.9)
+
+
 def test_evaluator_short_circuits_prior_and_zero_likelihood_rows() -> None:
     class CountingProposal:
         ndim = 1

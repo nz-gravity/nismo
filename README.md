@@ -13,7 +13,8 @@ sampling calculation in the regions that matter most to the posterior.
 NISMO provides:
 
 - log-evidence estimates and weighted posterior samples;
-- three replacement schemes: `fixed_morph`, `s-rwalk`, and `en-rwalk`;
+- four replacement schemes: `fixed_morph`, `mor-rwalk`, `s-rwalk`, and
+  `en-rwalk`;
 - multiprocessing with FIFO replacement prefetching;
 - configurable scientific stopping criteria and hard resource limits;
 - reproducible run histories, diagnostics, and plotting helpers.
@@ -27,46 +28,73 @@ $$
 Z = p(y) = \int_{\Theta} L(\theta)\,\pi(\theta)\,d\theta.
 $$
 
-NIS introduces a normalized importance density $q_0(\theta)$ and the
-transformed integrand
+NIS introduces a normalized importance density $q_0(\theta)$. NISMO can use
+the power-tempered (diffused) density
 
 $$
-\Psi(\theta)
-= \frac{L(\theta)\,\pi(\theta)}{q_0(\theta)}.
+\widetilde g_\beta(\theta)=q_0(\theta)^\beta,
+\qquad
+C_\beta=\int_\Theta q_0(\theta)^\beta\,d\theta,
+\qquad
+g_\beta(\theta)=\frac{q_0(\theta)^\beta}{C_\beta},
 $$
 
-The evidence can then be written as an expectation under $q_0$, or as the
+with $0<\beta\leq1$. The corresponding transformed integrand is
+
+$$
+\Psi_\beta(\theta)
+= \frac{C_\beta L(\theta)\,\pi(\theta)}{q_0(\theta)^\beta}.
+$$
+
+The evidence can then be written as an expectation under $g_\beta$, or as the
 usual one-dimensional nested-sampling integral:
 
 $$
 Z
-= \int_{\Theta} \Psi(\theta)\,q_0(\theta)\,d\theta
-= \int_0^1 \Psi(X)\,dX,
+= \int_{\Theta} \Psi_\beta(\theta)\,g_\beta(\theta)\,d\theta
+= \int_0^1 \Psi_\beta(X)\,dX,
 $$
 
 where
 
 $$
 X(\lambda)
-= \int_{\Psi(\theta)>\lambda}q_0(\theta)\,d\theta
+= \int_{\Psi_\beta(\theta)>\lambda}g_\beta(\theta)\,d\theta
 $$
 
 is the remaining probability mass under the importance density.
+
+`beta=1` is the standard sampler: $C_1=1$, $g_1=q_0$, and no Monte Carlo
+normalization is performed. For `0 < beta < 1`, NISMO estimates the
+normalizer directly from draws $\theta_j\sim q_0$ using
+
+$$
+C_\beta
+= \mathbb E_{q_0}\!\left[q_0(\theta)^{\beta-1}\right]
+\approx \frac{1}{N}\sum_{j=1}^N q_0(\theta_j)^{\beta-1}.
+$$
+
+The same finite candidate batch is importance-resampled to initialize the
+diffused pool. This mode is available for `mor-rwalk` and `s-rwalk`; their MH
+fallback targets constrained $g_\beta$ using the log-density difference
+$\beta[\log q_0(\theta')-\log q_0(\theta)]$. The endpoint `beta=0` is not
+supported because its normalizer is generally infinite on unbounded parameter
+spaces.
 
 ### How NISMO implements NIS
 
 1. A normalized Morph density $q_0$ is fitted to representative posterior
    samples and then fixed for the evidence calculation.
-2. The initial $N_{\rm live}$ points are drawn independently from $q_0$.
+2. The initial $N_{\rm live}$ points are drawn from $g_\beta$ (directly from
+   $q_0$ when `beta=1`, or from the finite tempered pool otherwise).
 3. NISMO evaluates
-   `log_psi0 = log_likelihood + log_prior - log_q0` and removes the live point
-   with the smallest transformed integrand.
+   `log_psi_beta = log_likelihood + log_prior - beta * log_q0 + log_C_beta`
+   and removes the live point with the smallest transformed integrand.
 4. Deterministic nested-volume shrinkage is used:
    $X_i=\exp(-i/N_{\rm live})$. Each dead point contributes
    $(X_{i-1}-X_i)\Psi_i$ to the evidence quadrature.
-5. A replacement is drawn from $q_0$, subject to the current
-   $\Psi$-constraint. The `fixed_morph`, `s-rwalk`, and `en-rwalk`
-   schemes are available.
+5. A replacement is drawn from the configured importance density, subject to
+   the current $\Psi_\beta$-constraint.
 6. At termination, the remaining live-point contribution is added and all
    contributions are normalized to produce posterior weights.
 
@@ -180,8 +208,8 @@ Select a scheme through `NISMOSampler(..., proposal_scheme=...)`:
 | Scheme | Replacement mechanism |
 |---|---|
 | `fixed_morph` | Independent constrained rejection draws from the fixed Morph |
-| `mor-rwalk` | One pre-evaluated Morph pool, followed by `s-rwalk` when the pool can no longer meet the constraint |
-| `s-rwalk` | Gaussian-covariance random walk targeting constrained $q_0$ |
+| `mor-rwalk` | One pre-evaluated Morph or power-tempered pool, followed by `s-rwalk` when the pool can no longer meet the constraint |
+| `s-rwalk` | Gaussian-covariance random walk targeting constrained $g_\beta$ |
 | `en-rwalk` | Split-ensemble differential-evolution, stretch, and Gaussian move mixture |
 
 Configure the hybrid scheme with a total initial pool size. NISMO randomly
@@ -194,6 +222,8 @@ from nismo import MORWalkSettings, SRWalkSettings
 sampler = NISMOSampler(
     ...,
     proposal_scheme="mor-rwalk",
+    beta=0.7,
+    beta_mc_samples=100_000,
     mor_rwalk_settings=MORWalkSettings(n_proposals=20_000),
     srwalk_settings=SRWalkSettings(n_steps=75),
 )
@@ -215,6 +245,8 @@ example with `NISMOSampler(..., n_workers=8, queue_size=8)`.
 `NISMOSampler.run(...)` returns an immutable `NISMOResult` containing:
 
 - `logz`, `logzerr`, `information`, `success`, and `termination_reason`;
+- `beta_diagnostics`, including the estimated `log_z_beta`, Monte Carlo error,
+  and effective sample size of the normalizing-constant estimate;
 - weighted dead and final-live points;
 - likelihood, prior, importance-density, transformed-integrand, and quadrature
   arrays;
@@ -224,8 +256,10 @@ example with `NISMOSampler(..., n_workers=8, queue_size=8)`.
 - reproducibility metadata and the initial and final random-number-generator
   states.
 
-The theoretical `logzerr = sqrt(H / n_live)` estimate is not a complete error
-budget: it does not include missing importance support, imperfect finite-length
+For `beta=1`, `logzerr = sqrt(H / n_live)`. For `beta<1`, the reported value
+combines that term and the direct-Monte-Carlo error estimate for `log_z_beta`
+in quadrature. It remains an incomplete error budget: it does not include
+missing importance support, finite-pool approximation, imperfect finite-length
 MCMC mixing, or adaptive-proposal approximation error.
 
 ## Documentation

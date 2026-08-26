@@ -12,6 +12,8 @@ NISMOSampler(
     n_live,
     rng,
     proposal_batch_size=64,
+    beta=1.0,
+    beta_mc_samples=100_000,
     tie_policy="strict",
     srwalk_settings=None,
     mor_rwalk_settings=None,
@@ -25,6 +27,22 @@ NISMOSampler(
 `model.ndim` must equal `importance_morph.ndim`. `rng` is a NumPy Generator or
 integer seed; a supplied Generator is consumed in place. `n_live` must be at
 least two, although ensemble sampling imposes a higher effective minimum.
+
+`beta` controls power tempering of the fixed importance density:
+
+```text
+g_beta(theta) = q0(theta)**beta / C_beta
+log_psi_beta = log_likelihood + log_prior - beta * log_q0 + log_C_beta
+```
+
+The default `beta=1` is the standard sampler and exactly preserves direct
+`q0` initialization. Values in `0 < beta < 1` diffuse the importance density
+and are supported by `mor-rwalk` and `s-rwalk`. NISMO estimates `C_beta`
+directly from `beta_mc_samples` independent `q0` draws, then importance-resamples
+the finite candidate batch to obtain the initial tempered pool. The candidate
+count must be at least the requested Morph-pool size (`n_live` for `s-rwalk`).
+The endpoint `beta=0` is rejected because the corresponding uniform-density
+normalizer is generally undefined on unbounded support.
 
 `tie_policy="strict"` is appropriate for ordinary continuous
 pseudo-likelihoods. Use `"randomized_plateau"` when exact ties have nonzero
@@ -42,8 +60,8 @@ the same path replaces NISMO's standard output files.
 |---|---|---|
 | `fixed_morph` | Rejection draws from fixed `q0` under the current `log_psi0` constraint | Default |
 | `adaptive_morph` | Periodically refits a separate proposal to the live set | Heuristic; evidence may be biased |
-| `mor-rwalk` | Initializes from one pre-evaluated Morph pool, consumes its randomized remainder, then switches permanently to `s-rwalk` | Initial batch must fit the likelihood budget; finite-walk mixing must be calibrated |
-| `s-rwalk` | Gaussian-covariance MH transitions targeting constrained `q0` | Finite-walk mixing must be calibrated |
+| `mor-rwalk` | Initializes from one pre-evaluated Morph or power-tempered pool, consumes its randomized remainder, then switches permanently to `s-rwalk` | Initial batch must fit the likelihood budget; finite-pool and finite-walk behavior must be calibrated |
+| `s-rwalk` | Gaussian-covariance MH transitions targeting constrained `q0**beta` | Finite-walk mixing must be calibrated |
 | `en-rwalk` | Split-ensemble DE/stretch/Gaussian MH mixture targeting constrained `q0` | Finite-walk mixing must be calibrated |
 
 All MCMC schemes start from eligible surviving live points, never the discarded
@@ -59,15 +77,21 @@ from nismo import MORWalkSettings, SRWalkSettings
 sampler = NISMOSampler(
     ...,
     proposal_scheme="mor-rwalk",
+    beta=0.7,
+    beta_mc_samples=100_000,
     mor_rwalk_settings=MORWalkSettings(n_proposals=20_000),
     srwalk_settings=SRWalkSettings(n_steps=75),
 )
 ```
 
-`n_proposals` is the total one-time Morph batch and must be at least `n_live`.
-NISMO evaluates the batch together, randomly selects `n_live` members as the
-initial live set, and retains the remainder in randomized order. Each early
-replacement is the first retained proposal satisfying the current constraint.
+`n_proposals` is the total one-time pool and must be at least `n_live`.
+At `beta=1`, NISMO draws the pool directly from `q0`. At `beta<1`, it draws
+`beta_mc_samples` candidates from `q0`, estimates
+`C_beta = mean(q0**(beta - 1))`, and samples the pool without replacement with
+weights proportional to `q0**(beta - 1)`. NISMO evaluates the resulting pool
+together, randomly selects `n_live` members as the initial live set, and
+retains the remainder in randomized order. Each early replacement is the
+first retained proposal satisfying the current constraint.
 When no remaining proposal passes, NISMO discards the exhausted remainder and
 uses `s-rwalk` for every subsequent replacement.
 
@@ -99,6 +123,12 @@ settings = SRWalkSettings(
     profile=False,
 )
 ```
+
+The MH invariant density is constrained `q0**beta`: a symmetric proposal from
+`theta` to `theta_prime` has log acceptance ratio
+`beta * (log_q0(theta_prime) - log_q0(theta))` after the transformed-integrand
+constraint is satisfied. Thus the fallback from a diffused `mor-rwalk` pool
+continues to target the same `g_beta` density.
 
 The live-set mean and scatter are computed once and updated in `O(ndim**2)`
 after each committed replacement. The survivor covariance uses a Cholesky
