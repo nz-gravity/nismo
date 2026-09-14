@@ -71,3 +71,48 @@ def test_beta_normalizer_uses_direct_q_monte_carlo_identity() -> None:
         rng=np.random.default_rng(8),
     )
     assert diagnostics.log_z_beta == pytest.approx(expected)
+
+
+def test_equal_candidate_and_pool_sizes_do_not_cancel_beta():
+    proposal = StandardNormalProposal()
+    pool, diagnostics = sample_power_tempered_pool(
+        proposal,
+        beta=0.5,
+        pool_size=30_000,
+        n_mc_samples=30_000,
+        rng=np.random.default_rng(144),
+    )
+    assert np.var(pool[:, 0]) == pytest.approx(2.0, abs=0.25)
+    assert diagnostics.sampling_method == "multinomial_sir"
+    assert 0 < diagnostics.unique_pool_size < diagnostics.pool_size
+
+
+def test_chunked_density_and_cached_selection_match_direct_normalization():
+    from nismo.tempering import prepare_power_tempered_pool
+
+    proposal = StandardNormalProposal()
+
+    def chunked(points):
+        return np.concatenate(
+            [proposal.log_prob(points[i : i + 7]) for i in range(0, len(points), 7)]
+        )
+
+    a, qa, da = prepare_power_tempered_pool(
+        proposal,
+        beta=0.8,
+        pool_size=100,
+        n_mc_samples=301,
+        rng=np.random.default_rng(13),
+        density_evaluator=chunked,
+    )
+    b, qb, db = prepare_power_tempered_pool(
+        proposal,
+        beta=0.8,
+        pool_size=100,
+        n_mc_samples=301,
+        rng=np.random.default_rng(13),
+    )
+    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(qa, qb)
+    np.testing.assert_array_equal(qa, proposal.log_prob(a))
+    assert da == db

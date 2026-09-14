@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +25,8 @@ class BetaTemperingDiagnostics:
     mc_effective_sample_size: float
     pool_size: int
     normalization_exact: bool
+    unique_pool_size: int = 0
+    sampling_method: str = "exact"
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.beta) or not 0.0 < self.beta <= 1.0:
@@ -69,14 +73,17 @@ def _validate_candidate_batch(
     return candidates
 
 
-def sample_power_tempered_pool(
+def prepare_power_tempered_pool(
     proposal: Proposal,
     *,
     beta: float,
     pool_size: int,
     n_mc_samples: int,
     rng: np.random.Generator,
-) -> tuple[NDArray[np.float64], BetaTemperingDiagnostics]:
+    density_evaluator: Callable[[NDArray[np.float64]], NDArray[np.float64]]
+    | None = None,
+    phase_seconds: dict[str, float] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64] | None, BetaTemperingDiagnostics]:
     r"""Estimate ``z_beta`` and construct a finite sample from ``q**beta``.
 
     For ``0 < beta < 1``, direct Monte Carlo under the normalized density
@@ -84,8 +91,9 @@ def sample_power_tempered_pool(
 
     ``z_beta = E_q[q(theta)**(beta - 1)]``.
 
-    The same independent candidate batch is converted into a unique finite
-    pool by weighted sampling without replacement.  This is a finite-candidate
+    The same independent candidate batch is resampled WITH replacement.
+    Without-replacement selection becomes q0 again when pool and MC sizes
+    coincide, irrespective of beta. Multinomial resampling is a consistent
     sampling-importance-resampling approximation to the normalized
     ``q(theta)**beta / z_beta`` density.  The returned ESS and log-normalizer
     error make the quality of that approximation auditable.
@@ -93,26 +101,47 @@ def sample_power_tempered_pool(
     ``beta=1`` is an exact fast path and consumes precisely one ordinary
     proposal draw, preserving the pre-tempering sampler behavior.
     """
+
+    def record_phase(name: str, started: float) -> None:
+        if phase_seconds is not None:
+            phase_seconds[name] = (
+                phase_seconds.get(name, 0.0) + time.monotonic() - started
+            )
+
     if not np.isfinite(beta) or not 0.0 < beta <= 1.0:
         raise ValueError("beta must be finite and in (0, 1]")
     if pool_size < 1:
         raise ValueError("pool_size must be positive")
     if beta == 1.0:
+        started = time.monotonic()
         points = _validate_candidate_batch(
             proposal.sample(pool_size, rng),
             n=pool_size,
             ndim=proposal.ndim,
         )
-        return np.array(points, copy=True), exact_beta_diagnostics(pool_size=pool_size)
+        record_phase("proposal_generation", started)
+        return (
+            np.array(points, copy=True),
+            None,
+            exact_beta_diagnostics(pool_size=pool_size),
+        )
     if n_mc_samples < pool_size:
         raise ValueError("n_mc_samples must be at least pool_size")
 
+    started = time.monotonic()
     candidates = _validate_candidate_batch(
         proposal.sample(n_mc_samples, rng),
         n=n_mc_samples,
         ndim=proposal.ndim,
     )
-    log_q = np.asarray(proposal.log_prob(candidates), dtype=float)
+    record_phase("proposal_generation", started)
+    started = time.monotonic()
+    log_q = np.asarray(
+        (proposal.log_prob if density_evaluator is None else density_evaluator)(
+            candidates
+        ),
+        dtype=float,
+    )
     if log_q.shape != (n_mc_samples,):
         raise InvalidProposalOutput(
             "proposal log_prob must return one value per beta Monte Carlo sample"
@@ -121,6 +150,8 @@ def sample_power_tempered_pool(
         raise InvalidProposalOutput(
             "proposal log_prob must be finite at its own beta Monte Carlo samples"
         )
+    record_phase("beta_density", started)
+    started = time.monotonic()
 
     log_weights = (beta - 1.0) * log_q
     log_weight_sum = float(logsumexp(log_weights))
@@ -145,17 +176,11 @@ def sample_power_tempered_pool(
         )
 
     probabilities = np.exp(log_weights - log_weight_sum)
-    positive = int(np.count_nonzero(probabilities > 0.0))
-    if positive < pool_size:
-        raise InvalidProposalOutput(
-            "beta Monte Carlo weights contain too few positive candidates for "
-            f"a unique pool of size {pool_size}; increase beta_mc_samples"
-        )
     selected = np.asarray(
         rng.choice(
             n_mc_samples,
             size=pool_size,
-            replace=False,
+            replace=True,
             p=probabilities,
         ),
         dtype=np.int64,
@@ -169,5 +194,28 @@ def sample_power_tempered_pool(
         mc_effective_sample_size=mc_ess,
         pool_size=pool_size,
         normalization_exact=False,
+        unique_pool_size=len(np.unique(selected)),
+        sampling_method="multinomial_sir",
     )
-    return pool, diagnostics
+    record_phase("beta_normalization_resampling", started)
+    return pool, np.array(log_q[selected], copy=True), diagnostics
+
+
+def sample_power_tempered_pool(
+    proposal: Proposal,
+    *,
+    beta: float,
+    pool_size: int,
+    n_mc_samples: int,
+    rng: np.random.Generator,
+) -> tuple[NDArray[np.float64], BetaTemperingDiagnostics]:
+    """Compatibility wrapper returning coordinates and finite-SIR diagnostics.
+
+    Beta < 1 remains a finite-MC approximation: resampled points share a
+    candidate set and may repeat. ESS/normalizer errors do not guarantee tail
+    coverage or independent draws from the continuous tempered reference.
+    """
+    points, _, diagnostics = prepare_power_tempered_pool(
+        proposal, beta=beta, pool_size=pool_size, n_mc_samples=n_mc_samples, rng=rng
+    )
+    return points, diagnostics

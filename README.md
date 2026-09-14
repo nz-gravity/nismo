@@ -327,3 +327,10 @@ programmatically with `sampler.citations`.
 
 NISMO is distributed under the
 [BSD 3-Clause license](https://github.com/nz-gravity/nismo/blob/main/LICENSE).
+
+### Vectorized and rolling execution
+
+Independent `s-rwalk` chains can now share vectorized model/Morph evaluations
+or run through a bounded, ordered process pipeline. The default compatibility
+backend preserves the existing single-death sampler. See
+[parallel execution](docs/parallel-execution.md) for configuration and benchmarks.

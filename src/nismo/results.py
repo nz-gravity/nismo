@@ -13,6 +13,7 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.special import logsumexp
 
 from .config import NISMOConfig
+from .execution import ExecutionDiagnostics
 from .proposals import MorphMetadata
 from .quadrature import live_log_contributions
 from .replacement import QueueDiagnostics
@@ -264,6 +265,7 @@ class NISMOResult:
     queue_diagnostics: QueueDiagnostics
     ensemble_move_history: EnsembleMoveHistory | None = None
     srwalk_diagnostics: SRWalkDiagnostics | None = None
+    execution_diagnostics: ExecutionDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if self.nlive != self.config.n_live:

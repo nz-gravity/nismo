@@ -218,6 +218,7 @@ def calculate_stopping_metrics(
     logz_history: ArrayLike,
     logzerr: float,
     stability_window: int,
+    precomputed_live_ess: float | None = None,
 ) -> StoppingMetrics:
     """Calculate finite-live-set and evidence diagnostics in log space.
 
@@ -271,15 +272,20 @@ def calculate_stopping_metrics(
             raise NumericalInvariantError("live evidence exceeds total evidence")
         remaining_fraction = float(np.exp(min(log_fraction, 0.0)))
 
-        finite = np.isfinite(values)
-        with np.errstate(over="ignore"):
-            centered = values - float(np.max(values[finite]))
-        log_sum = float(logsumexp(centered))
-        log_sum_squared = float(logsumexp(2.0 * centered))
-        live_ess = float(np.exp(2.0 * log_sum - log_sum_squared))
-        live_ess = float(np.clip(live_ess, 1.0, n_live))
-        if np.all(finite) and np.all(values == values[0]):
-            live_ess = float(n_live)
+        if precomputed_live_ess is None:
+            finite = np.isfinite(values)
+            with np.errstate(over="ignore"):
+                centered = values - float(np.max(values[finite]))
+            log_sum = float(logsumexp(centered))
+            log_sum_squared = float(logsumexp(2.0 * centered))
+            live_ess = float(np.exp(2.0 * log_sum - log_sum_squared))
+            live_ess = float(np.clip(live_ess, 1.0, n_live))
+            if np.all(finite) and np.all(values == values[0]):
+                live_ess = float(n_live)
+        else:
+            live_ess = precomputed_live_ess
+            if not np.isfinite(live_ess) or not 1.0 <= live_ess <= n_live:
+                raise ValueError("precomputed_live_ess must lie in [1, n_live]")
         variance_ratio = max(
             (n_live / live_ess - 1.0) / (n_live - 1),
             0.0,
