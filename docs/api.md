@@ -250,7 +250,18 @@ EnsembleRWalkSettings(
     gaussian_scale=None,
 )
 
-ParallelSettings(n_workers=1, queue_size=None)
+ParallelSettings(
+    n_workers=1,
+    queue_size=None,
+    backend="compatibility",
+    scheduler="epoch",
+    chains_per_task=1,
+    adaptation_interval=20,
+    initialization="auto",
+    evaluation_chunk_size=1024,
+    worker_threads=None,
+    diagnostic_interval=1,
+)
 ```
 
 `EnsembleMoveWeights.active_names_and_probabilities` returns enabled names and
@@ -394,3 +405,7 @@ ProposalScheme  # Literal proposal-scheme names
 EnsembleMoveName  # Literal ensemble move names
 __version__  # Installed distribution version
 ```
+
+New execution modes and their constraints are described in
+[parallel execution](parallel-execution.md). `NISMOResult.execution_diagnostics`
+contains phase timings and optional worker traces and is persisted in run outputs.

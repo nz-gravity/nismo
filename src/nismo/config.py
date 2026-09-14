@@ -28,16 +28,26 @@ ProposalScheme = Literal[
 
 @dataclass(frozen=True, slots=True)
 class ParallelSettings:
-    """Replacement-prefetch worker and queue settings.
+    """Execution settings, independent of single-death statistical settings.
 
     ``queue_size`` defaults to ``n_workers``.  The all-serial compatibility
     path is therefore represented by the default ``(1, 1)`` settings.  A
-    queue larger than one requires a process pool, so it also requires
-    ``n_workers > 1``.
+    compatibility queue larger than one requires ``n_workers > 1``. The
+    vectorized backend can queue many chains within one NumPy process.
+    ``queue_size`` bounds ALL outstanding and buffered chains, independently
+    of ``n_workers * chains_per_task``. New execution modes are opt-in.
     """
 
     n_workers: int = 1
     queue_size: int | None = None
+    backend: Literal["compatibility", "vectorized", "process"] = "compatibility"
+    scheduler: Literal["epoch", "ordered", "rolling"] = "epoch"
+    chains_per_task: int = 1
+    adaptation_interval: int = 20
+    initialization: Literal["auto", "serial", "process"] = "auto"
+    evaluation_chunk_size: int = 1024
+    worker_threads: int | None = None
+    diagnostic_interval: int = 1
 
     def __post_init__(self) -> None:
         workers = _positive_integer(self.n_workers, name="parallel n_workers")
@@ -51,8 +61,45 @@ class ParallelSettings:
         )
         object.__setattr__(self, "n_workers", workers)
         object.__setattr__(self, "queue_size", queue_size)
-        if workers == 1 and queue_size > 1:
+        if self.backend not in ("compatibility", "vectorized", "process"):
+            raise ConfigurationError("unsupported execution backend")
+        if self.scheduler not in ("epoch", "ordered", "rolling"):
+            raise ConfigurationError("unsupported execution scheduler")
+        if self.initialization not in ("auto", "serial", "process"):
+            raise ConfigurationError("unsupported initialization backend")
+        for name in (
+            "chains_per_task",
+            "adaptation_interval",
+            "evaluation_chunk_size",
+            "diagnostic_interval",
+        ):
+            object.__setattr__(
+                self,
+                name,
+                _positive_integer(getattr(self, name), name=f"parallel {name}"),
+            )
+        if self.worker_threads is not None:
+            object.__setattr__(
+                self,
+                "worker_threads",
+                _positive_integer(self.worker_threads, name="parallel worker_threads"),
+            )
+        if self.backend == "compatibility" and workers == 1 and queue_size > 1:
             raise ConfigurationError("parallel queue_size > 1 requires n_workers > 1")
+        if self.backend == "compatibility" and (
+            self.chains_per_task != 1 or self.scheduler != "epoch"
+        ):
+            raise ConfigurationError("compatibility requires single chains and epochs")
+        if self.backend == "vectorized" and (
+            workers != 1
+            or self.scheduler != "epoch"
+            or self.initialization == "process"
+        ):
+            raise ConfigurationError(
+                "vectorized requires one worker and epoch scheduling"
+            )
+        if self.initialization == "process" and workers == 1:
+            raise ConfigurationError("process initialization requires n_workers > 1")
 
 
 def _positive_integer(value: object, *, name: str) -> int:
@@ -285,6 +332,9 @@ class MORWalkSettings:
     """Settings for the Morph-pool then ``s-rwalk`` hybrid scheme."""
 
     n_proposals: int
+    refill: bool = False
+    refill_min_acceptance: float = 0.05
+    refill_max_batches: int = 10
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -293,6 +343,21 @@ class MORWalkSettings:
             _positive_integer(
                 self.n_proposals,
                 name="mor-rwalk n_proposals",
+            ),
+        )
+        if not isinstance(self.refill, bool):
+            raise ConfigurationError("mor-rwalk refill must be a boolean")
+        acceptance = _positive_finite(
+            self.refill_min_acceptance, name="mor-rwalk refill_min_acceptance"
+        )
+        if acceptance > 1:
+            raise ConfigurationError("refill_min_acceptance must be <= 1")
+        object.__setattr__(self, "refill_min_acceptance", acceptance)
+        object.__setattr__(
+            self,
+            "refill_max_batches",
+            _positive_integer(
+                self.refill_max_batches, name="mor-rwalk refill_max_batches"
             ),
         )
 
@@ -556,6 +621,19 @@ class NISMOConfig:
             )
         if not isinstance(self.parallel, ParallelSettings):
             raise ConfigurationError("parallel must be a ParallelSettings")
+        if self.parallel.backend != "compatibility" and self.proposal_scheme not in (
+            "s-rwalk",
+            "mor-rwalk",
+        ):
+            raise ConfigurationError(
+                "new execution backends require s-rwalk or mor-rwalk"
+            )
+        if (
+            beta < 1
+            and self.mor_rwalk_settings is not None
+            and self.mor_rwalk_settings.refill
+        ):
+            raise ConfigurationError("Morph refills currently require beta=1")
         if (
             self.proposal_scheme == "en-rwalk"
             and self.ensemble_rwalk_settings.n_walkers > self.n_live - 1

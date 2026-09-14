@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import multiprocessing as mp
 import os
 import time
 from collections.abc import Mapping
@@ -34,12 +33,14 @@ from .constrained import (
     validate_proposal_sample,
 )
 from .exceptions import ConfigurationError
+from .execution import ExecutionService, OrderedTasks
 from .mcmc import (
     RWALK_CITATIONS,
     SRWalkGeometry,
     SRWalkSampler,
     draw_ensemble_rwalk_constrained,
     draw_srwalk_constrained,
+    eligible_survivor_indices,
     prepare_srwalk_start,
 )
 from .model import CallableModel, Model
@@ -51,6 +52,7 @@ from .quadrature import (
     estimate_information,
     estimated_live_logz,
     finalize_quadrature,
+    live_log_stats,
     update_log_weighted_mean,
 )
 from .replacement import (
@@ -62,8 +64,8 @@ from .replacement import (
     ReplacementWorkerContext,
     SRWalkTask,
     build_replacement,
+    build_srwalk_batch,
     build_srwalk_replacement,
-    initialize_replacement_worker,
     prepare_replacement_snapshot,
 )
 from .results import EnsembleMoveHistory, NISMOResult, RunHistory, SRWalkDiagnostics
@@ -76,7 +78,7 @@ from .stopping import (
 from .tempering import (
     BetaTemperingDiagnostics,
     exact_beta_diagnostics,
-    sample_power_tempered_pool,
+    prepare_power_tempered_pool,
 )
 
 
@@ -405,6 +407,7 @@ class NISMOSampler:
             raise TypeError(
                 "adaptive_morph requires an importance Morph with a refit method"
             )
+        self._morph_fit_seconds = 0.0
         self.model = model
         self.importance_morph = importance_morph
         self.proposal_morph = importance_morph
@@ -490,12 +493,13 @@ class NISMOSampler:
         ``morph_config`` is passed as keyword arguments to
         :meth:`MorphProposal.fit`.
         """
+        fit_start = time.monotonic()
         importance_morph = MorphProposal.fit(
             posterior_samples,
             param_names=model.parameter_names,
             **dict(morph_config),
         )
-        return cls(
+        sampler = cls(
             model=model,
             importance_morph=importance_morph,
             n_live=n_live,
@@ -514,10 +518,42 @@ class NISMOSampler:
             parallel=parallel,
             output_path=output_path,
         )
+        sampler._morph_fit_seconds = time.monotonic() - fit_start
+        return sampler
 
     def run(
         self,
         *,
+        dlogz: float | None = None,
+        stopping: StoppingPolicy | None = None,
+        max_iterations: int = 10_000,
+        max_proposals_per_replacement: int = 100_000,
+        max_likelihood_calls: int | None = None,
+        max_wall_time: float | None = None,
+        progress: ProgressOption = False,
+    ) -> NISMOResult:
+        """Run single-death NIS with the configured execution backend.
+
+        Scientific stopping is checked at every committed replacement. Hard
+        limits return a valid partial result; callback/model errors propagate
+        after all owned workers are cleaned up.
+        """
+        with ExecutionService() as execution:
+            return self._run(
+                execution=execution,
+                dlogz=dlogz,
+                stopping=stopping,
+                max_iterations=max_iterations,
+                max_proposals_per_replacement=max_proposals_per_replacement,
+                max_likelihood_calls=max_likelihood_calls,
+                max_wall_time=max_wall_time,
+                progress=progress,
+            )
+
+    def _run(
+        self,
+        *,
+        execution: ExecutionService,
         dlogz: float | None = None,
         stopping: StoppingPolicy | None = None,
         max_iterations: int = 10_000,
@@ -621,30 +657,52 @@ class NISMOSampler:
 
         morph_pool: _MorphReplacementPool | None = None
         beta_diagnostics: BetaTemperingDiagnostics
+        execution.add_time("morph_fit", self._morph_fit_seconds)
+        execution.start(
+            ReplacementWorkerContext(
+                config=config,
+                model=_worker_model(self.model, n_workers=config.parallel.n_workers),
+                importance_morph=self.importance_morph,
+            )
+        )
+        prepared_log_q0 = None
+        initialization_start = time.monotonic()
         try:
             prepared_theta: NDArray[np.float64] | None = None
             if config.proposal_scheme == "mor-rwalk":
                 settings = config.mor_rwalk_settings
                 if settings is None:  # pragma: no cover - config validates this
                     raise RuntimeError("mor-rwalk settings were not resolved")
-                prepared_theta, beta_diagnostics = sample_power_tempered_pool(
-                    self.importance_morph,
-                    beta=config.beta,
-                    pool_size=settings.n_proposals,
-                    n_mc_samples=config.beta_mc_samples,
-                    rng=self.rng,
+                prepared_theta, prepared_log_q0, beta_diagnostics = (
+                    prepare_power_tempered_pool(
+                        self.importance_morph,
+                        beta=config.beta,
+                        pool_size=settings.n_proposals,
+                        n_mc_samples=config.beta_mc_samples,
+                        rng=self.rng,
+                        density_evaluator=execution.density,
+                        phase_seconds=execution.phases,
+                    )
                 )
             elif config.beta < 1.0:
-                prepared_theta, beta_diagnostics = sample_power_tempered_pool(
-                    self.importance_morph,
-                    beta=config.beta,
-                    pool_size=self.n_live,
-                    n_mc_samples=config.beta_mc_samples,
-                    rng=self.rng,
+                prepared_theta, prepared_log_q0, beta_diagnostics = (
+                    prepare_power_tempered_pool(
+                        self.importance_morph,
+                        beta=config.beta,
+                        pool_size=self.n_live,
+                        n_mc_samples=config.beta_mc_samples,
+                        rng=self.rng,
+                        density_evaluator=execution.density,
+                        phase_seconds=execution.phases,
+                    )
                 )
             else:
                 beta_diagnostics = exact_beta_diagnostics(pool_size=self.n_live)
 
+            execution.add_time(
+                "proposal_and_beta", time.monotonic() - initialization_start
+            )
+            initialization_start = time.monotonic()
             evaluator = BatchEvaluator(
                 self.model,
                 self.importance_morph,
@@ -663,7 +721,7 @@ class NISMOSampler:
                 if prepared_theta is None:  # pragma: no cover - prepared above
                     raise RuntimeError("mor-rwalk tempered pool was not prepared")
                 all_theta = prepared_theta
-                initial = evaluator.evaluate(all_theta)
+                initial = execution.evaluate(evaluator, all_theta, prepared_log_q0)
                 all_tie_breakers = self.rng.random(pool_size)
                 randomized_indices = np.asarray(
                     self.rng.permutation(pool_size),
@@ -693,6 +751,7 @@ class NISMOSampler:
                 )
             else:
                 if prepared_theta is None:
+                    proposal_started = time.monotonic()
                     live_theta = np.array(
                         validate_proposal_sample(
                             self.importance_morph.sample(self.n_live, self.rng),
@@ -701,9 +760,12 @@ class NISMOSampler:
                         ),
                         copy=True,
                     )
+                    execution.add_time(
+                        "proposal_generation", time.monotonic() - proposal_started
+                    )
                 else:
                     live_theta = prepared_theta
-                initial = evaluator.evaluate(live_theta)
+                initial = execution.evaluate(evaluator, live_theta, prepared_log_q0)
                 live_log_likelihood = np.array(initial.log_likelihood, copy=True)
                 live_log_prior = np.array(initial.log_prior, copy=True)
                 live_log_q0 = np.array(initial.log_q0, copy=True)
@@ -712,6 +774,15 @@ class NISMOSampler:
         except BaseException:
             progress_reporter.close("error")
             raise
+        execution.add_time(
+            "initial_evaluation", time.monotonic() - initialization_start
+        )
+        morph_eval_seconds = time.monotonic() - initialization_start
+        morph_refills = 0
+        morph_accepts = 0
+        morph_trials = 0
+        assess_refill = False
+        pilot_seconds = 0.0
         srwalk_geometry = (
             SRWalkGeometry(live_theta, settings=config.srwalk_settings)
             if config.proposal_scheme in ("s-rwalk", "mor-rwalk")
@@ -769,43 +840,19 @@ class NISMOSampler:
         queue = ReplacementQueue()
         queue_accounting = QueueAccounting()
         compatibility_mode = (
-            config.parallel.n_workers == 1 and config.parallel.queue_size == 1
+            config.parallel.backend == "compatibility"
+            and config.parallel.n_workers == 1
+            and config.parallel.queue_size == 1
         )
-        worker_model = _worker_model(
-            self.model,
-            n_workers=config.parallel.n_workers,
-        )
-        worker_context = ReplacementWorkerContext(
-            config=config,
-            model=worker_model,
-            importance_morph=self.importance_morph,
-            log_z_beta=beta_diagnostics.log_z_beta,
-        )
-        # Dynesty initializes the function cache in both workers and the
-        # coordinator. This also keeps direct map-compatible calls testable.
-        initialize_replacement_worker(worker_context)
-        worker_pool = (
-            mp.get_context("spawn").Pool(
-                processes=config.parallel.n_workers,
-                initializer=initialize_replacement_worker,
-                initargs=(worker_context,),
-            )
-            if not compatibility_mode
-            else None
-        )
+        worker_pool = execution.pool
+        pending = OrderedTasks(execution, int(config.parallel.queue_size or 1))
+        rolling = config.parallel.scheduler == "rolling"
 
         def close_worker_pool(*, terminate: bool) -> None:
-            nonlocal worker_pool
-            if worker_pool is None:
-                return
-            if terminate:
-                worker_pool.terminate()
-            else:
-                worker_pool.close()
-            worker_pool.join()
-            worker_pool = None
+            execution.close(terminate=terminate)
 
         next_job_id = 0
+        tuning_revision = 0
         epoch_results: list[ReplacementResult] = []
         srwalk_queue_setup_seconds = 0.0
         srwalk_worker_dispatch_seconds = 0.0
@@ -838,18 +885,20 @@ class NISMOSampler:
             return self.adaptive_proposal_controller.revision
 
         def finish_proposal_epoch() -> None:
-            nonlocal epoch_results
+            nonlocal epoch_results, tuning_revision
             if not epoch_results:
                 return
             if srwalk_sampler is not None:
                 completed_srwalk = tuple(
                     (
                         result.attempt.n_accepted,
-                        float(result.proposal_scale),
+                        srwalk_sampler.scale
+                        if rolling
+                        else float(result.proposal_scale),
                         result.attempt.n_completed,
                     )
                     for result in epoch_results
-                    if result.attempt.n_completed == srwalk_sampler.n_steps
+                    if result.attempt.n_completed > 0
                     and (
                         result.attempt.draw is not None
                         or result.attempt.reason == "srwalk_stalled"
@@ -857,7 +906,28 @@ class NISMOSampler:
                     and result.proposal_scale is not None
                 )
                 srwalk_sampler.record_completed_epoch(completed_srwalk)
+                if completed_srwalk:
+                    tuning_revision += 1
             epoch_results = []
+
+        def account_result(result: ReplacementResult) -> None:
+            nonlocal n_proposals
+            queue_accounting.queue_jobs_completed += 1
+            queue_accounting.prefetch_likelihood_calls += result.counts.likelihood_calls
+            if result.attempt.draw is None:
+                queue_accounting.queue_candidates_failed += 1
+            _add_evaluation_counts(evaluator, result.counts)
+            n_proposals += result.attempt.n_proposed
+            record_srwalk_attempt(result.attempt)
+            execution.record(result, niter)
+
+        def receive_pending() -> None:
+            for result in pending.receive():
+                account_result(result)
+            received = []
+            while pending.buffer:
+                received.append(pending.pop())
+            queue.extend(received)
 
         def refill_queue(
             *,
@@ -872,16 +942,24 @@ class NISMOSampler:
             if queue_size is None:  # pragma: no cover - post-init resolves it
                 raise RuntimeError("parallel queue_size was not resolved")
             capacity = min(
-                queue_size,
-                config.max_iterations - niter,
+                queue_size - len(queue) - len(pending),
+                config.max_iterations - niter - len(queue) - len(pending),
             )
+            if assess_refill and pilot_seconds == 0:
+                capacity = min(capacity, 1)
             if self.adaptive_proposal_controller is not None:
                 until_refit = config.proposal_update_interval - (
                     niter % config.proposal_update_interval
                 )
                 capacity = min(capacity, until_refit)
             if capacity <= 0:
-                return "max_iterations"
+                return None if len(queue) + len(pending) else "max_iterations"
+            if (
+                rolling
+                and capacity < config.parallel.chains_per_task
+                and len(queue) + len(pending)
+            ):
+                return None
 
             reserved_calls = _fixed_job_call_requirement(
                 config=config,
@@ -889,12 +967,20 @@ class NISMOSampler:
             )
             job_call_budget: int | None = None
             if config.max_likelihood_calls is not None:
-                remaining = config.max_likelihood_calls - evaluator.n_likelihood_calls
+                remaining = (
+                    config.max_likelihood_calls
+                    - evaluator.n_likelihood_calls
+                    - pending.reserved_calls
+                )
                 if remaining <= 0:
-                    return "max_likelihood_calls"
+                    return None if len(queue) + len(pending) else "max_likelihood_calls"
                 if reserved_calls is not None:
                     if remaining < reserved_calls:
-                        return "max_likelihood_calls"
+                        return (
+                            None
+                            if len(queue) + len(pending)
+                            else "max_likelihood_calls"
+                        )
                     capacity = min(capacity, remaining // reserved_calls)
                     job_call_budget = reserved_calls
                 elif remaining >= config.max_proposals_per_replacement:
@@ -909,7 +995,7 @@ class NISMOSampler:
             if capacity <= 0:
                 return "max_likelihood_calls"
 
-            setup_start = time.perf_counter() if config.srwalk_settings.profile else 0.0
+            setup_start = time.perf_counter()
             proposal_revision = active_proposal_revision()
             if config.proposal_scheme in ("s-rwalk", "mor-rwalk"):
                 if srwalk_geometry is None or srwalk_sampler is None:
@@ -917,6 +1003,14 @@ class NISMOSampler:
                 # Match Dynesty: select every starting live point and proposal
                 # geometry in the coordinator before deriving worker seeds.
                 srwalk_factor = srwalk_geometry.factor_for_worst(live_theta[worst])
+                eligible = eligible_survivor_indices(
+                    live_log_psi0=live_log_psi0,
+                    live_tie_breakers=live_tie_breakers,
+                    worst=worst,
+                    threshold=threshold,
+                    threshold_tie_breaker=threshold_tie,
+                    tie_policy=config.tie_policy,
+                )
                 starts: list[EvaluatedPoint] = []
                 for _ in range(capacity):
                     starting = prepare_srwalk_start(
@@ -931,12 +1025,13 @@ class NISMOSampler:
                         threshold_tie_breaker=threshold_tie,
                         tie_policy=config.tie_policy,
                         rng=self.rng,
+                        eligible=eligible,
                     )
                     if starting is None:
                         return "insufficient_eligible_survivors"
                     starts.append(starting)
                 rseeds: list[np.random.SeedSequence | np.random.Generator]
-                if capacity > 1:
+                if capacity > 1 or config.parallel.backend != "compatibility":
                     rseeds = list(_get_seed_sequence(self.rng, capacity))
                 else:
                     rseeds = [self.rng]
@@ -950,11 +1045,14 @@ class NISMOSampler:
                             threshold_tie_breaker=threshold_tie,
                             proposal_revision=proposal_revision,
                             proposal_factor=srwalk_factor,
+                            tuning_revision=tuning_revision,
                             scale=srwalk_sampler.scale,
                             n_steps=srwalk_sampler.n_steps,
                             rseed=rseed,
                             max_likelihood_calls=job_call_budget,
                             deadline=deadline,
+                            log_z_beta=beta_diagnostics.log_z_beta,
+                            created_iteration=niter,
                         )
                     )
                     next_job_id += 1
@@ -962,9 +1060,36 @@ class NISMOSampler:
                     srwalk_queue_setup_seconds += time.perf_counter() - setup_start
                 queue_accounting.queue_refills += 1
                 queue_accounting.queue_jobs_submitted += len(tasks)
-                dispatch_start = (
-                    time.perf_counter() if config.srwalk_settings.profile else 0.0
+                execution.add_time(
+                    "task_preparation", time.perf_counter() - setup_start
                 )
+                if config.parallel.backend != "compatibility":
+                    width = config.parallel.chains_per_task
+                    for offset in range(0, len(tasks), width):
+                        group = tuple(tasks[offset : offset + width])
+                        calls = sum(task.max_likelihood_calls or 0 for task in group)
+                        if config.parallel.backend == "vectorized" or width > 1:
+                            pending.submit(
+                                build_srwalk_batch,
+                                group,
+                                n_chains=len(group),
+                                calls=calls,
+                            )
+                        else:
+                            pending.submit(
+                                build_srwalk_replacement,
+                                group[0],
+                                n_chains=1,
+                                calls=calls,
+                            )
+                    execution.peak_outstanding = max(
+                        execution.peak_outstanding, len(queue) + len(pending)
+                    )
+                    if config.parallel.scheduler == "epoch":
+                        while len(pending):
+                            receive_pending()
+                    return None
+                dispatch_start = time.perf_counter()
                 if worker_pool is None:  # pragma: no cover - queued mode owns a pool
                     results = [build_srwalk_replacement(task) for task in tasks]
                 else:
@@ -973,6 +1098,7 @@ class NISMOSampler:
                         tasks,
                         chunksize=1,
                     )
+                execution.add_time("map_wait", time.perf_counter() - dispatch_start)
                 if config.srwalk_settings.profile:
                     srwalk_worker_dispatch_seconds += (
                         time.perf_counter() - dispatch_start
@@ -990,7 +1116,7 @@ class NISMOSampler:
                     live_tie_breakers=live_tie_breakers,
                     proposal_revision=proposal_revision,
                 )
-                if capacity > 1:
+                if capacity > 1 or config.parallel.backend != "compatibility":
                     rseeds = list(_get_seed_sequence(self.rng, capacity))
                 else:
                     rseeds = [self.rng]
@@ -1004,6 +1130,8 @@ class NISMOSampler:
                             rseed=rseed,
                             max_likelihood_calls=job_call_budget,
                             deadline=deadline,
+                            log_z_beta=beta_diagnostics.log_z_beta,
+                            created_iteration=niter,
                         )
                     )
                     next_job_id += 1
@@ -1011,9 +1139,7 @@ class NISMOSampler:
                     srwalk_queue_setup_seconds += time.perf_counter() - setup_start
                 queue_accounting.queue_refills += 1
                 queue_accounting.queue_jobs_submitted += len(jobs)
-                dispatch_start = (
-                    time.perf_counter() if config.srwalk_settings.profile else 0.0
-                )
+                dispatch_start = time.perf_counter()
                 if worker_pool is None:  # pragma: no cover - queued mode owns a pool
                     results = [build_replacement(job) for job in jobs]
                 else:
@@ -1022,18 +1148,13 @@ class NISMOSampler:
                         jobs,
                         chunksize=1,
                     )
+                execution.add_time("map_wait", time.perf_counter() - dispatch_start)
                 if config.srwalk_settings.profile:
                     srwalk_worker_dispatch_seconds += (
                         time.perf_counter() - dispatch_start
                     )
             for result in results:
-                queue_accounting.queue_jobs_completed += 1
-                queue_accounting.prefetch_likelihood_calls += (
-                    result.counts.likelihood_calls
-                )
-                _add_evaluation_counts(evaluator, result.counts)
-                n_proposals += result.attempt.n_proposed
-                record_srwalk_attempt(result.attempt)
+                account_result(result)
             queue.extend(results)
             epoch_results = results
             return None
@@ -1046,7 +1167,7 @@ class NISMOSampler:
                 config.max_likelihood_calls is not None
                 and evaluator.n_likelihood_calls >= config.max_likelihood_calls
                 and morph_pool is None
-                and (compatibility_mode or len(queue) == 0)
+                and (compatibility_mode or len(queue) + len(pending) == 0)
             ):
                 termination_reason = "max_likelihood_calls"
                 break
@@ -1072,18 +1193,74 @@ class NISMOSampler:
             attempt_uses_mcmc = False
             try:
                 attempt: ConstrainedAttempt | None = None
+                if (
+                    assess_refill
+                    and pilot_seconds > 0
+                    and len(queue) + len(pending) == 0
+                ):
+                    # The pilot walk was committed in order. Choose the next
+                    # source using past costs, before generating fresh draws.
+                    settings = config.mor_rwalk_settings
+                    if settings is None:
+                        raise RuntimeError("Morph refill settings are missing")
+                    pool_size = settings.n_proposals
+                    acceptance = morph_accepts / max(1, morph_trials)
+                    morph_rate = morph_accepts / max(morph_eval_seconds, 1e-15)
+                    budget_ok = (
+                        config.max_likelihood_calls is None
+                        or evaluator.n_likelihood_calls + pool_size
+                        <= config.max_likelihood_calls
+                    )
+                    if (
+                        acceptance >= settings.refill_min_acceptance
+                        and morph_rate > 1.0 / pilot_seconds
+                        and budget_ok
+                        and morph_refills < settings.refill_max_batches
+                    ):
+                        refill_started = time.monotonic()
+                        coordinates = validate_proposal_sample(
+                            self.importance_morph.sample(pool_size, self.rng),
+                            n=pool_size,
+                            ndim=self.model.ndim,
+                        )
+                        evaluated = execution.evaluate(evaluator, coordinates)
+                        ties = self.rng.random(pool_size)
+                        indices = np.asarray(
+                            self.rng.permutation(pool_size), dtype=np.int64
+                        )
+                        morph_pool = _MorphReplacementPool(evaluated, indices, ties)
+                        morph_eval_seconds = time.monotonic() - refill_started
+                        execution.add_time("morph_refill", morph_eval_seconds)
+                        morph_refills += 1
+                        n_proposals += pool_size
+                        morph_accepts = morph_trials = 0
+                    assess_refill = False
+                    pilot_seconds = 0.0
+                if deadline is not None and time.monotonic() >= deadline:
+                    termination_reason = "max_wall_time"
+                    break
                 if morph_pool is not None:
+                    previous_cursor = morph_pool.cursor
                     attempt = morph_pool.draw(
                         threshold=threshold,
                         threshold_tie_breaker=threshold_tie,
                         tie_policy=config.tie_policy,
                     )
+                    morph_trials += morph_pool.cursor - previous_cursor
+                    morph_accepts += int(attempt is not None)
                     if attempt is None:
-                        # The threshold is monotone, so no rejected remainder
-                        # can become eligible later. Switch permanently.
+                        settings = config.mor_rwalk_settings
+                        assess_refill = bool(
+                            settings is not None
+                            and settings.refill
+                            and morph_accepts > 0
+                            and morph_refills < settings.refill_max_batches
+                        )
+                        pilot_seconds = 0.0
                         morph_pool = None
 
                 if attempt is None:
+                    walk_started = time.monotonic()
                     attempt_uses_mcmc = config.proposal_scheme in (
                         "s-rwalk",
                         "en-rwalk",
@@ -1098,6 +1275,7 @@ class NISMOSampler:
                             if srwalk_geometry is not None
                             else None
                         )
+                        serial_started = time.monotonic()
                         attempt = _draw_replacement(
                             config=config,
                             evaluator=evaluator,
@@ -1116,9 +1294,32 @@ class NISMOSampler:
                             srwalk_sampler=srwalk_sampler,
                             srwalk_factor=srwalk_factor,
                         )
+                        serial_finished = time.monotonic()
+                        execution.add_time(
+                            "serial_evolution", serial_finished - serial_started
+                        )
+                        if attempt.draw is None:
+                            queue_accounting.queue_candidates_failed += 1
                         counts = _evaluation_delta(
                             before,
                             _evaluation_counts(evaluator),
+                        )
+                        execution.record(
+                            ReplacementResult(
+                                job_id=queue_accounting.queue_jobs_submitted - 1,
+                                attempt=attempt,
+                                threshold_at_creation=threshold,
+                                threshold_tie_breaker_at_creation=threshold_tie,
+                                proposal_revision=active_proposal_revision(),
+                                counts=counts,
+                                created_iteration=niter,
+                                started_at=serial_started,
+                                finished_at=serial_finished,
+                                execution_seconds=serial_finished - serial_started,
+                                worker_pid=os.getpid(),
+                                worker_threads=execution.thread_counts[0],
+                            ),
+                            niter,
                         )
                         queue_accounting.queue_jobs_completed += 1
                         queue_accounting.prefetch_likelihood_calls += (
@@ -1135,7 +1336,7 @@ class NISMOSampler:
                         selected: ReplacementResult | None = None
                         last_failure: str | None = None
                         while selected is None and not termination_reason:
-                            if len(queue) == 0:
+                            if rolling or len(queue) + len(pending) == 0:
                                 refill_failure = refill_queue(
                                     worst=worst,
                                     threshold=threshold,
@@ -1144,14 +1345,23 @@ class NISMOSampler:
                                 if refill_failure is not None:
                                     termination_reason = refill_failure
                                     break
-                                if (
-                                    deadline is not None
-                                    and time.monotonic() >= deadline
-                                ):
-                                    termination_reason = "max_wall_time"
-                                    break
+                            if len(queue) == 0 and len(pending):
+                                receive_pending()
+                            if deadline is not None and time.monotonic() >= deadline:
+                                termination_reason = "max_wall_time"
+                                break
                             while len(queue):
                                 candidate = queue.popleft()
+                                age = niter - candidate.created_iteration
+                                queue_accounting.total_candidate_age += age
+                                queue_accounting.max_candidate_age = max(
+                                    queue_accounting.max_candidate_age, age
+                                )
+                                if config.parallel.backend != "compatibility" and (
+                                    candidate.attempt.draw is not None
+                                    or candidate.attempt.reason == "srwalk_stalled"
+                                ):
+                                    epoch_results.append(candidate)
                                 valid, rejection = queue.is_current_and_valid(
                                     candidate,
                                     threshold=threshold,
@@ -1164,7 +1374,10 @@ class NISMOSampler:
                                         candidate.attempt.reason
                                         or "constrained_sampling_exhausted"
                                     )
-                                elif rejection == "proposal_revision":
+                                elif rejection in (
+                                    "proposal_revision",
+                                    "reference_revision",
+                                ):
                                     if candidate.attempt.draw is not None:
                                         accounting = queue_accounting
                                         accounting.queue_candidates_invalidated += 1
@@ -1176,11 +1389,19 @@ class NISMOSampler:
                                     queue_accounting.used_prefetch_likelihood_calls += (
                                         candidate.counts.likelihood_calls
                                     )
-                                if len(queue) == 0:
+                                if (
+                                    rolling
+                                    and len(epoch_results)
+                                    >= config.parallel.adaptation_interval
+                                ) or (not rolling and len(queue) + len(pending) == 0):
                                     finish_proposal_epoch()
                                 if selected is not None:
                                     break
-                            if selected is None and len(queue) == 0 and last_failure:
+                            if (
+                                selected is None
+                                and len(queue) + len(pending) == 0
+                                and last_failure
+                            ):
                                 termination_reason = last_failure
                         if selected is None:
                             if termination_reason:
@@ -1196,6 +1417,8 @@ class NISMOSampler:
                                 "replacement queue produced no candidate"
                             )
                         attempt = selected.attempt
+                    if assess_refill and attempt.draw is not None:
+                        pilot_seconds = time.monotonic() - walk_started
             except BaseException:
                 close_worker_pool(terminate=True)
                 progress_reporter.close("error")
@@ -1212,6 +1435,7 @@ class NISMOSampler:
                     termination_reason = "plateau_stall"
                 break
 
+            commit_started = time.monotonic()
             point = attempt.draw.point
             iteration = niter + 1
             log_x, log_delta_x, log_weight = dead_log_contribution(
@@ -1252,7 +1476,15 @@ class NISMOSampler:
                 log_weight,
                 threshold,
             )
-            logz_live = estimated_live_logz(log_x, live_log_psi0)
+            live_stats = (
+                live_log_stats(live_log_psi0)
+                if config.parallel.backend != "compatibility"
+                else None
+            )
+            live_normalizer = None if live_stats is None else live_stats.log_normalizer
+            logz_live = estimated_live_logz(
+                log_x, live_log_psi0, live_log_normalizer=live_normalizer
+            )
             logz_total = float(np.logaddexp(logz_dead, logz_live))
             information = estimate_information(
                 logz_dead=logz_dead,
@@ -1260,6 +1492,7 @@ class NISMOSampler:
                 logz_live=logz_live,
                 live_log_psi=live_log_psi0,
                 logz_total=logz_total,
+                live_log_normalizer=live_normalizer,
             )
             logzerr = float(
                 np.hypot(
@@ -1279,6 +1512,9 @@ class NISMOSampler:
                 logz_history=stability_history,
                 logzerr=logzerr,
                 stability_window=stopping_policy.stability_window,
+                precomputed_live_ess=None
+                if live_stats is None
+                else live_stats.effective_sample_size,
             )
             stopping_decision = evaluate_stopping_policy(
                 metrics=stopping_metrics,
@@ -1301,7 +1537,15 @@ class NISMOSampler:
             history_logz_stability.append(stopping_metrics.logz_stability)
             history_stopping_streak.append(stopping_streak)
             history_live_min.append(float(np.min(live_log_psi0)))
-            history_live_median.append(float(np.median(live_log_psi0)))
+            record_display = (
+                niter == 1
+                or niter % config.parallel.diagnostic_interval == 0
+                or stopping_decision.should_stop
+                or niter == config.max_iterations
+            )
+            history_live_median.append(
+                float(np.median(live_log_psi0)) if record_display else float("nan")
+            )
             history_live_max.append(float(np.max(live_log_psi0)))
             history_proposals.append(attempt.n_proposed)
             history_likelihood_calls.append(evaluator.n_likelihood_calls)
@@ -1356,7 +1600,10 @@ class NISMOSampler:
             history_proposal_update_attempts.append(proposal_update_attempts)
             history_proposal_update_failures.append(proposal_update_failures)
 
-            if progress_reporter.is_active:
+            execution.add_time(
+                "coordinator_commit_stopping", time.monotonic() - commit_started
+            )
+            if progress_reporter.is_active and record_display:
                 progress_info: dict[str, float | int] = {
                     "iteration": niter,
                     "max_iterations": config.max_iterations,
@@ -1427,7 +1674,11 @@ class NISMOSampler:
                     else "stopping_criteria"
                 )
 
+        while len(pending):
+            receive_pending()
         discarded_results = queue.clear()
+        queue_accounting.queue_candidates_unused += len(discarded_results)
+        finalization_started = time.monotonic()
         queue_accounting.queue_candidates_invalidated += sum(
             result.attempt.draw is not None for result in discarded_results
         )
@@ -1596,7 +1847,11 @@ class NISMOSampler:
             queue_diagnostics=queue_diagnostics,
             ensemble_move_history=ensemble_move_history,
             srwalk_diagnostics=srwalk_diagnostics,
+            execution_diagnostics=execution.freeze(),
         )
+        execution.add_time("finalization", time.monotonic() - finalization_started)
+        execution.add_time("run_total", time.monotonic() - start)
+        result = replace(result, execution_diagnostics=execution.freeze())
         if self.output_path is not None:
             result.save(self.output_path)
         return result

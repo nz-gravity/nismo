@@ -32,6 +32,7 @@ classifiers = [
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.10",
+  "threadpoolctl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -123,7 +124,7 @@ strict = true
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["morphZ", "morphZ.*", "scipy", "scipy.*", "tqdm", "tqdm.*"]
+module = ["morphZ", "morphZ.*", "scipy", "scipy.*", "tqdm", "tqdm.*", "threadpoolctl"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

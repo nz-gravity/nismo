@@ -21,6 +21,7 @@ from .exceptions import (
     NumericalInvariantError,
     ProposalSupportError,
 )
+from .execution import ExecutionDiagnostics
 from .model import CallableModel, Model
 from .output import save_run_outputs
 from .plotting import (
@@ -56,6 +57,7 @@ __all__ = [
     "EnsembleMoveWeights",
     "EnsembleRWalkSettings",
     "EvaluationCounts",
+    "ExecutionDiagnostics",
     "InvalidModelOutput",
     "InvalidProposalOutput",
     "MORWalkSettings",

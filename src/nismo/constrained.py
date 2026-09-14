@@ -229,7 +229,13 @@ class BatchEvaluator:
         if np.any(np.isposinf(values)):
             raise error_type(f"{name} returned +infinity")
 
-    def evaluate(self, theta: NDArray[np.float64]) -> EvaluatedBatch:
+    def evaluate(
+        self,
+        theta: NDArray[np.float64],
+        *,
+        cached_log_q0: NDArray[np.float64] | None = None,
+        max_likelihood_calls: int | None = None,
+    ) -> EvaluatedBatch:
         """Evaluate and validate an ``(n, ndim)`` batch.
 
         ``-inf`` likelihood or prior values are valid zero-density values.
@@ -238,6 +244,20 @@ class BatchEvaluator:
         """
         points = validate_points(theta, self.ndim)
         n_points = len(points)
+        # Reserve the worst case before any part of a batched transition runs.
+        if (
+            max_likelihood_calls is not None
+            and self.n_likelihood_calls + n_points > max_likelihood_calls
+        ):
+            raise LikelihoodBudgetExhausted
+        if cached_log_q0 is not None:
+            cached_log_q0 = np.asarray(cached_log_q0, dtype=float)
+            self._validate_values(
+                "cached log_q0",
+                cached_log_q0,
+                expected=n_points,
+                error_type=InvalidProposalOutput,
+            )
         log_prior = self._log_prior(points)
         self.n_prior_calls += n_points
         self._validate_values(
@@ -266,7 +286,11 @@ class BatchEvaluator:
         q0_indices = np.flatnonzero(finite_numerator)
         log_q0 = np.full(n_points, -np.inf, dtype=float)
         if len(q0_indices):
-            evaluated_q0 = self._log_q0(points[q0_indices])
+            evaluated_q0 = (
+                self._log_q0(points[q0_indices])
+                if cached_log_q0 is None
+                else cached_log_q0[q0_indices]
+            )
             self._validate_values(
                 "log_q0",
                 evaluated_q0,

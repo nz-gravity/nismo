@@ -180,6 +180,7 @@ def _diagnostic_payload(
         "beta_tempering": result.beta_diagnostics,
         "queue_diagnostics": queue,
         "srwalk_diagnostics": result.srwalk_diagnostics,
+        "execution_diagnostics": result.execution_diagnostics,
         "ensemble_move_totals": ensemble_totals,
         "config": result.config,
         "proposal_updates": result.proposal_updates,

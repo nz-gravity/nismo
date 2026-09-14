@@ -2013,6 +2013,7 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "threadpoolctl" },
 ]
 
 [package.optional-dependencies]
@@ -2085,6 +2086,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.10" },
+    { name = "threadpoolctl", specifier = ">=3.1" },
     { name = "tqdm", marker = "extra == 'all'", specifier = ">=4.66" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.66" },
     { name = "tqdm", marker = "extra == 'lvk'", specifier = ">=4.66" },

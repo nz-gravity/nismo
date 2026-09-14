@@ -750,6 +750,7 @@ def prepare_srwalk_start(
     threshold_tie_breaker: float,
     tie_policy: TiePolicy,
     rng: np.random.Generator,
+    eligible: NDArray[np.int64] | None = None,
 ) -> EvaluatedPoint | None:
     """Choose one eligible survivor before dispatching an ``s-rwalk`` job.
 
@@ -757,13 +758,17 @@ def prepare_srwalk_start(
     the frozen start and proposal geometry to workers.  Keeping the same
     boundary avoids serializing the complete live set with every job.
     """
-    eligible = eligible_survivor_indices(
-        live_log_psi0=live_log_psi0,
-        live_tie_breakers=live_tie_breakers,
-        worst=worst,
-        threshold=threshold,
-        threshold_tie_breaker=threshold_tie_breaker,
-        tie_policy=tie_policy,
+    eligible = (
+        eligible
+        if eligible is not None
+        else eligible_survivor_indices(
+            live_log_psi0=live_log_psi0,
+            live_tie_breakers=live_tie_breakers,
+            worst=worst,
+            threshold=threshold,
+            threshold_tie_breaker=threshold_tie_breaker,
+            tie_policy=tie_policy,
+        )
     )
     if len(eligible) == 0:
         return None

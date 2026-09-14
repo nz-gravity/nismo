@@ -87,13 +87,14 @@ sampler = NISMOSampler(
 `n_proposals` is the total one-time pool and must be at least `n_live`.
 At `beta=1`, NISMO draws the pool directly from `q0`. At `beta<1`, it draws
 `beta_mc_samples` candidates from `q0`, estimates
-`C_beta = mean(q0**(beta - 1))`, and samples the pool without replacement with
+`C_beta = mean(q0**(beta - 1))`, and resamples the pool with replacement using
 weights proportional to `q0**(beta - 1)`. NISMO evaluates the resulting pool
 together, randomly selects `n_live` members as the initial live set, and
 retains the remainder in randomized order. Each early replacement is the
 first retained proposal satisfying the current constraint.
 When no remaining proposal passes, NISMO discards the exhausted remainder and
-uses `s-rwalk` for every subsequent replacement.
+uses `s-rwalk` for every subsequent replacement by default. Optional beta=1
+refills are described in [parallel execution](parallel-execution.md).
 
 The randomized order is statistically important: sorting the pool and always
 choosing the lowest passing `log_psi0` would bias replacements toward the
@@ -295,3 +296,10 @@ of passing decisions. `logz_stability` cannot pass until its full window exists.
 `live_logz_error`, stability, and theoretical `logzerr` are incomplete error
 measures. They do not detect missing proposal support or guarantee that a
 finite-length MCMC replacement has mixed.
+
+## Vectorized and rolling execution
+
+`ParallelSettings` also supports opt-in `vectorized` and `process` backends,
+independent chain batch sizes, bounded ordered scheduling, initialization
+chunks, and worker thread limits. See [parallel execution](parallel-execution.md)
+for configuration, diagnostics, beta corrections, and validation limits.

@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Added opt-in vectorized independent `s-rwalk` chains and ordered/rolling
+  process scheduling with bounded outstanding work, full-chain call
+  reservations, and coordinator-only single-death quadrature.
+- Reused the owned worker pool for scalar initialization and chunked beta
+  densities; added thread controls, phase/task diagnostics, optional beta=1
+  Morph refills, and a diagnostic cadence independent of scientific stopping.
+- Corrected beta pool resampling to use replacement, preventing diffusion from
+  disappearing when the MC candidate count equals the selected pool size.
+  Reused cached selected densities and exposed finite-SIR duplicate diagnostics.
+- Added kernel equivalence, scheduler/resource, analytic statistical checks,
+  and a reproducible execution benchmark. New execution defaults remain opt-in.
+
 - Added power-tempering support for `mor-rwalk` and `s-rwalk`. `beta=1`
   preserves the standard sampler, while `0 < beta < 1` targets normalized
   `q0**beta`, estimates its normalizing constant by direct Monte Carlo, builds

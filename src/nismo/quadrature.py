@@ -22,6 +22,33 @@ class QuadratureSummary:
     log_posterior_weights: NDArray[np.float64]
 
 
+@dataclass(frozen=True, slots=True)
+class LiveLogStats:
+    """Reusable reductions of a single committed live set."""
+
+    log_normalizer: float
+    effective_sample_size: float
+
+
+def live_log_stats(live_log_psi: ArrayLike) -> LiveLogStats:
+    values = np.asarray(live_log_psi, dtype=float)
+    if values.ndim != 1 or len(values) < 2:
+        raise ValueError("live_log_psi must be one-dimensional with length >= 2")
+    if np.any(np.isnan(values)) or np.any(np.isposinf(values)):
+        raise NumericalInvariantError("live_log_psi contains NaN or positive infinity")
+    offset = float(np.max(values))
+    if np.isneginf(offset):
+        return LiveLogStats(-np.inf, float(len(values)))
+    with np.errstate(over="ignore"):
+        centered = values - offset
+    log_sum = float(logsumexp(centered))
+    log_sum_squared = float(logsumexp(2.0 * centered))
+    ess = float(np.clip(np.exp(2.0 * log_sum - log_sum_squared), 1.0, len(values)))
+    if np.all(values == values[0]):
+        ess = float(len(values))
+    return LiveLogStats(offset + log_sum, ess)
+
+
 def update_log_weighted_mean(
     log_total: float,
     mean: float,
@@ -63,6 +90,7 @@ def estimate_information(
     logz_live: float,
     live_log_psi: ArrayLike,
     logz_total: float,
+    live_log_normalizer: float | None = None,
 ) -> float:
     """Estimate current information from dead and remaining live mass.
 
@@ -83,7 +111,11 @@ def estimate_information(
         total_mean += float(np.exp(logz_dead - logz_total)) * dead_log_psi_mean
     if np.isfinite(logz_live):
         positive = np.isfinite(live_psi)
-        live_normalizer = float(logsumexp(live_psi))
+        live_normalizer = (
+            float(logsumexp(live_psi))
+            if live_log_normalizer is None
+            else live_log_normalizer
+        )
         live_mean = float(
             np.sum(np.exp(live_psi[positive] - live_normalizer) * live_psi[positive])
         )
@@ -131,8 +163,14 @@ def live_log_contributions(
     return np.asarray(log_x - np.log(len(values)) + values, dtype=np.float64)
 
 
-def estimated_live_logz(log_x: float, live_log_psi: ArrayLike) -> float:
+def estimated_live_logz(
+    log_x: float, live_log_psi: ArrayLike, *, live_log_normalizer: float | None = None
+) -> float:
     """Return the mean-live estimate of remaining log evidence."""
+    if live_log_normalizer is not None:
+        return float(
+            log_x - np.log(len(np.asarray(live_log_psi))) + live_log_normalizer
+        )
     contributions = live_log_contributions(log_x, live_log_psi)
     return float(logsumexp(contributions))
 

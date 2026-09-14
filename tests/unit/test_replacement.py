@@ -167,3 +167,21 @@ def test_queue_diagnostics_report_exact_efficiencies() -> None:
     )
     assert diagnostics.queue_efficiency == pytest.approx(0.6)
     assert diagnostics.compute_efficiency == pytest.approx(0.6)
+
+
+def test_tuning_revision_does_not_invalidate_a_fixed_reference_walk():
+    from dataclasses import replace
+
+    candidate = _result(7, log_psi0=3)
+    settings = dict(
+        threshold=2.0,
+        threshold_tie_breaker=0.0,
+        proposal_revision=0,
+        tie_policy="strict",
+    )
+    assert ReplacementQueue.is_current_and_valid(
+        replace(candidate, tuning_revision=99), **settings
+    ) == (True, None)
+    assert ReplacementQueue.is_current_and_valid(
+        replace(candidate, reference_revision=1), **settings
+    ) == (False, "reference_revision")

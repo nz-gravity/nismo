@@ -7,13 +7,18 @@ live-point, stopping, or history state.
 
 from __future__ import annotations
 
+import multiprocessing as mp
+import os
+import time
 from collections import deque
 from dataclasses import dataclass, fields
 from itertools import pairwise
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
+from .batch import evolve_srwalk_batch
 from .config import NISMOConfig, TiePolicy
 from .constrained import (
     BatchEvaluator,
@@ -47,17 +52,33 @@ class ReplacementWorkerContext:
 
 
 _WORKER_CONTEXT: ReplacementWorkerContext | None = None
+_THREAD_LIMITER: object | None = None
+_THREAD_COUNTS: tuple[int, ...] = ()
 
 
-def initialize_replacement_worker(context: ReplacementWorkerContext) -> None:
+def initialize_replacement_worker(
+    context: ReplacementWorkerContext, ready: Any = None
+) -> None:
     """Install the run context in a spawned worker process.
 
     This mirrors Dynesty's pool initializer: model and fixed-importance
     objects cross the process boundary once, while map jobs contain only the
     state that changes from one proposed replacement to the next.
     """
-    global _WORKER_CONTEXT
+    global _WORKER_CONTEXT, _THREAD_LIMITER, _THREAD_COUNTS
     _WORKER_CONTEXT = context
+    if (
+        context.config.parallel.worker_threads is not None
+        and mp.current_process().name != "MainProcess"
+    ):
+        from threadpoolctl import threadpool_limits
+
+        _THREAD_LIMITER = threadpool_limits(context.config.parallel.worker_threads)
+    from threadpoolctl import threadpool_info
+
+    _THREAD_COUNTS = tuple(int(item["num_threads"]) for item in threadpool_info())
+    if ready is not None:
+        ready.put(_THREAD_COUNTS)
 
 
 def _replacement_worker_context() -> ReplacementWorkerContext:
@@ -159,6 +180,8 @@ class ReplacementJob:
     rseed: np.random.SeedSequence | np.random.Generator
     max_likelihood_calls: int | None
     deadline: float | None
+    log_z_beta: float | None = None
+    created_iteration: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +199,9 @@ class SRWalkTask:
     rseed: np.random.SeedSequence | np.random.Generator
     max_likelihood_calls: int | None
     deadline: float | None
+    log_z_beta: float | None = None
+    created_iteration: int = 0
+    tuning_revision: int = 0
 
     def __post_init__(self) -> None:
         if self.proposal_revision < 0:
@@ -200,6 +226,15 @@ class ReplacementResult:
     proposal_revision: int
     counts: EvaluationCounts
     proposal_scale: float | None = None
+    created_iteration: int = 0
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    execution_seconds: float = 0.0
+    worker_pid: int = 0
+    worker_threads: tuple[int, ...] = ()
+    normalized_squared_displacement: float | None = None
+    reference_revision: int = 0
+    tuning_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +250,10 @@ class QueueDiagnostics:
     prefetch_likelihood_calls: int = 0
     used_prefetch_likelihood_calls: int = 0
     wasted_prefetch_likelihood_calls: int = 0
+    queue_candidates_failed: int = 0
+    queue_candidates_unused: int = 0
+    total_candidate_age: int = 0
+    max_candidate_age: int = 0
 
     def __post_init__(self) -> None:
         for field in fields(self):
@@ -263,6 +302,10 @@ class QueueAccounting:
         self.queue_refills = 0
         self.prefetch_likelihood_calls = 0
         self.used_prefetch_likelihood_calls = 0
+        self.queue_candidates_failed = 0
+        self.queue_candidates_unused = 0
+        self.total_candidate_age = 0
+        self.max_candidate_age = 0
 
     def freeze(self) -> QueueDiagnostics:
         return QueueDiagnostics(
@@ -277,6 +320,10 @@ class QueueAccounting:
             wasted_prefetch_likelihood_calls=(
                 self.prefetch_likelihood_calls - self.used_prefetch_likelihood_calls
             ),
+            queue_candidates_failed=self.queue_candidates_failed,
+            queue_candidates_unused=self.queue_candidates_unused,
+            total_candidate_age=self.total_candidate_age,
+            max_candidate_age=self.max_candidate_age,
         )
 
 
@@ -312,7 +359,12 @@ class ReplacementQueue:
         threshold_tie_breaker: float,
         proposal_revision: int,
         tie_policy: TiePolicy,
+        reference_revision: int = 0,
     ) -> tuple[bool, str | None]:
+        # The reference is fixed for an evidence run. Tuning revisions only
+        # change future symmetric proposals and never invalidate old endpoints.
+        if result.reference_revision != reference_revision:
+            return False, "reference_revision"
         if result.proposal_revision != proposal_revision:
             return False, "proposal_revision"
         draw = result.attempt.draw
@@ -361,13 +413,14 @@ def prepare_replacement_snapshot(
 
 def build_replacement(job: ReplacementJob) -> ReplacementResult:
     """Construct one complete replacement without mutating coordinator state."""
+    started = time.monotonic()
     context = _replacement_worker_context()
     rng = np.random.default_rng(job.rseed)
     evaluator = BatchEvaluator(
         context.model,
         context.importance_morph,
         beta=context.config.beta,
-        log_z_beta=context.log_z_beta,
+        log_z_beta=context.log_z_beta if job.log_z_beta is None else job.log_z_beta,
         profile=(
             context.config.proposal_scheme in ("s-rwalk", "mor-rwalk")
             and context.config.srwalk_settings.profile
@@ -420,11 +473,17 @@ def build_replacement(job: ReplacementJob) -> ReplacementResult:
         proposal_revision=snapshot.proposal_revision,
         counts=EvaluationCounts.from_evaluator(evaluator),
         proposal_scale=proposal_scale,
+        created_iteration=job.created_iteration,
+        started_at=started,
+        finished_at=time.monotonic(),
+        execution_seconds=time.monotonic() - started,
+        worker_pid=os.getpid(),
     )
 
 
 def build_srwalk_replacement(task: SRWalkTask) -> ReplacementResult:
     """Evolve one coordinator-prepared ``s-rwalk`` start in a worker."""
+    started = time.monotonic()
     context = _replacement_worker_context()
     config = context.config
     rng = np.random.default_rng(task.rseed)
@@ -432,7 +491,7 @@ def build_srwalk_replacement(task: SRWalkTask) -> ReplacementResult:
         context.model,
         context.importance_morph,
         beta=config.beta,
-        log_z_beta=context.log_z_beta,
+        log_z_beta=context.log_z_beta if task.log_z_beta is None else task.log_z_beta,
         profile=config.srwalk_settings.profile,
     )
     attempt = evolve_srwalk_constrained(
@@ -458,4 +517,120 @@ def build_srwalk_replacement(task: SRWalkTask) -> ReplacementResult:
         proposal_revision=task.proposal_revision,
         counts=EvaluationCounts.from_evaluator(evaluator),
         proposal_scale=task.scale,
+        created_iteration=task.created_iteration,
+        started_at=started,
+        finished_at=time.monotonic(),
+        execution_seconds=time.monotonic() - started,
+        worker_pid=os.getpid(),
+        worker_threads=_worker_thread_counts()
+        if config.srwalk_settings.profile
+        else (),
+        normalized_squared_displacement=_normalized_displacement(task, attempt),
+        tuning_revision=task.tuning_revision,
     )
+
+
+def _worker_thread_counts() -> tuple[int, ...]:
+    return _THREAD_COUNTS
+
+
+def _normalized_displacement(task: SRWalkTask, attempt: ConstrainedAttempt) -> float:
+    if (
+        attempt.draw is None
+        or not _replacement_worker_context().config.srwalk_settings.profile
+    ):
+        return 0.0
+    delta = attempt.draw.point.theta - task.starting.theta
+    whitened = np.linalg.solve(task.proposal_factor, delta)
+    return float(np.sum(whitened**2))
+
+
+def build_srwalk_batch(tasks: tuple[SRWalkTask, ...]) -> list[ReplacementResult]:
+    """Execute a small batch of complete independent chains in one worker."""
+    started = time.monotonic()
+    context = _replacement_worker_context()
+    config = context.config
+    first = tasks[0]
+    if any(
+        (
+            task.threshold,
+            task.threshold_tie_breaker,
+            task.n_steps,
+            task.scale,
+            task.log_z_beta,
+            task.deadline,
+        )
+        != (
+            first.threshold,
+            first.threshold_tie_breaker,
+            first.n_steps,
+            first.scale,
+            first.log_z_beta,
+            first.deadline,
+        )
+        or not np.array_equal(task.proposal_factor, first.proposal_factor)
+        for task in tasks
+    ):
+        raise ValueError("batched tasks must share frozen threshold and tuning")
+    evaluator = BatchEvaluator(
+        context.model,
+        context.importance_morph,
+        beta=config.beta,
+        log_z_beta=context.log_z_beta if first.log_z_beta is None else first.log_z_beta,
+        profile=config.srwalk_settings.profile,
+    )
+    budgets = [task.max_likelihood_calls for task in tasks]
+    if any(value is not None and value < first.n_steps for value in budgets):
+        raise ValueError("batched tasks require full-chain call reservations")
+    budget = (
+        None
+        if any(value is None for value in budgets)
+        else sum(value for value in budgets if value is not None)
+    )
+    walked = evolve_srwalk_batch(
+        evaluator=evaluator,
+        starts=[task.starting for task in tasks],
+        threshold=first.threshold,
+        threshold_tie_breaker=first.threshold_tie_breaker,
+        tie_policy=config.tie_policy,
+        proposal_factor=first.proposal_factor,
+        scale=first.scale,
+        n_steps=first.n_steps,
+        rngs=[np.random.default_rng(task.rseed) for task in tasks],
+        max_proposals=config.max_proposals_per_replacement,
+        max_likelihood_calls=budget,
+        deadline=first.deadline,
+        zero_move_policy=config.srwalk_settings.zero_move_policy,
+    )
+    finished = time.monotonic()
+    threads = _worker_thread_counts() if config.srwalk_settings.profile else ()
+    results = []
+    for i, (task, attempt) in enumerate(zip(tasks, walked.attempts, strict=True)):
+        results.append(
+            ReplacementResult(
+                job_id=task.job_id,
+                attempt=attempt,
+                threshold_at_creation=task.threshold,
+                threshold_tie_breaker_at_creation=task.threshold_tie_breaker,
+                proposal_revision=task.proposal_revision,
+                proposal_scale=task.scale,
+                counts=EvaluationCounts(
+                    likelihood_calls=walked.likelihood_calls[i],
+                    prior_calls=attempt.n_proposed,
+                    outside_prior=walked.outside_prior[i],
+                    zero_likelihood=walked.zero_likelihood[i],
+                    likelihood_seconds=evaluator.likelihood_seconds / len(tasks),
+                    prior_seconds=evaluator.prior_seconds / len(tasks),
+                    q0_seconds=evaluator.q0_seconds / len(tasks),
+                ),
+                created_iteration=task.created_iteration,
+                started_at=started,
+                finished_at=finished,
+                execution_seconds=(finished - started) / len(tasks),
+                worker_pid=os.getpid(),
+                worker_threads=threads,
+                normalized_squared_displacement=_normalized_displacement(task, attempt),
+                tuning_revision=task.tuning_revision,
+            )
+        )
+    return results
