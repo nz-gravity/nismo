@@ -7,6 +7,7 @@ import re
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
@@ -237,6 +238,19 @@ class MorphProposal:
             verbose=False,
             top_k_greedy=top_k_greedy,
         )
+        # SciPy implements scalar bandwidths with a local lambda, which cannot
+        # be pickled when the execution service spawns workers. MorphZ owns
+        # these KDEs; keep this compatibility fix here until it handles their
+        # serialization upstream. Replace only the constant rule, without
+        # refitting or changing any cached covariance/density state.
+        components = [
+            *getattr(backend, "group_kdes", ()),
+            *getattr(backend, "single_kdes", {}).values(),
+        ]
+        for component in components:
+            kde = component["kde"]
+            if getattr(kde, "_bw_method", None) == "use constant":
+                kde.covariance_factor = partial(float, kde.factor)
         metadata = MorphMetadata(
             n_training=samples.shape[0],
             ndim=samples.shape[1],
