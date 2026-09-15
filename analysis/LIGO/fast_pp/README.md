@@ -100,3 +100,54 @@ repeat the same command with `--resume` to continue it.
 
 Run NISMO on that isolated posterior with `--dynesty-nlive 500`; NISMO will
 also use 500 live points and will write to a setting-specific output directory.
+
+## Rough rslice → wider Morph pilot
+
+One script runs both stages on the existing simulated H1/L1 injection, with
+all eight intrinsic parameters sampled and extrinsics fixed:
+
+```bash
+uv run --extra lvk python analysis/LIGO/fast_pp/rslice_morph_demo.py 48 \
+  --output-dir analysis/LIGO/fast_pp/outdir/rslice_morph_seed48
+```
+
+Defaults: 100 live points in **both** stages; Dynesty `rslice` with three slices
+and a loose `dlogz=3`; automatic pairwise Morph grouping; kernel widths twice
+Silverman's rule; NISMO `fixed_morph` with `dlogz=0.1`. The posterior is used
+only for fitting the normalized proposal. NISMO draws a fresh live set and
+uses the original full likelihood and sampled-coordinate prior.
+
+`--bandwidth-scale 2` doubles kernel standard deviations (quadruples kernel
+covariances), using the appropriate Silverman factor for each group dimension.
+It does not stretch posterior coordinates. KDE draws outside the prior have
+zero target density. The mass constraints are checked to be redundant over
+the sampled mass box before either stage runs.
+
+To compare bandwidths using exactly the same rough posterior:
+
+```bash
+uv run --extra lvk python analysis/LIGO/fast_pp/rslice_morph_demo.py 48 \
+  --rough-from analysis/LIGO/fast_pp/outdir/rslice_morph_seed48 \
+  --bandwidth-scale 1 \
+  --output-dir analysis/LIGO/fast_pp/outdir/rslice_morph_seed48_bw1
+```
+
+Use a new output directory for each run. Reuse checks the noise/PSD/prior/waveform
+fingerprint, parameter order, injection index, and live count. Other controls
+are `--rough-seed`, `--nismo-seed`, `--nlive`, `--rough-dlogz`, `--slices`,
+`--rough-maxcall`, `--dlogz`, `--max-calls`, and `--max-seconds` (NISMO only).
+The rough call limit is approximate, as Dynesty finishes its current update.
+
+Outputs include `rough.npz` (weighted samples and resampled training draws),
+`rough.json`, `proposal.json`, `settings.json`, `summary.json`, and the NISMO
+weighted samples/history/diagnostics under `nismo/`. The summary records both
+stages' evidence estimates, ESS, termination, call counts and elapsed times.
+Pipeline cost includes the original rough run even when reused; invocation
+time records the current execution. Call counts count sampler likelihood
+requests, including NISMO rows rejected by the prior before waveform evaluation.
+
+A hard limit produces saved **partial** NISMO results and exit code 2; scientific
+stopping gives exit code 0. A call-limited rough posterior may still train the
+proposal, with its unmet target recorded. Broadening can cover nearby tails but
+cannot establish that a rough run found every mode. Compare against independent
+high-live-point nested sampling before claiming accuracy or speed gains.
