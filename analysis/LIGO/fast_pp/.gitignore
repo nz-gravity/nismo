@@ -1,4 +1,7 @@
+
+../../../docs/benchmarks/lvk*
 outdir/seed_48/**
 outdir
+out_*
 plots/
 plot_seed_47_48_lnz.py

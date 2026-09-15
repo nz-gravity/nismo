@@ -151,3 +151,88 @@ stopping gives exit code 0. A call-limited rough posterior may still train the
 proposal, with its unmet target recorded. Broadening can cover nearby tails but
 cannot establish that a rough run found every mode. Compare against independent
 high-live-point nested sampling before claiming accuracy or speed gains.
+
+Corner plots with injection truth are saved automatically under `plots/` in PNG
+and PDF formats: all eight coordinates before and after NISMO, plus a side-by-side
+mass/spin comparison. These use the original posterior weights, unsmoothed
+histograms and shared axes. Incomplete results are labelled explicitly. Marginal
+5/50/95% quantiles and truth CDFs are saved in `weighted_marginals.csv`; they are
+summaries of the finite weighted samples, not a claim of calibrated coverage.
+To regenerate plots from an existing run without sampling:
+
+```bash
+uv run --extra lvk python analysis/LIGO/fast_pp/rslice_morph_demo.py 48 \
+  --plots-only --output-dir docs/benchmarks/lvk-rslice-morph-20260915/bw2
+```
+
+For a reused rough run whose original location has moved, provide the archived
+training directory via `--rough-from`.
+
+### Stage recovery checks
+
+After **each** stage the script prints and saves (`stage_checks.json`):
+
+- The sampler's stopping-target status and weighted posterior ESS.
+- The 5/50/95% noise-weighted **network overlap** with the injected signal.
+- The 5/50/95% noise-weighted waveform difference, expressed as residual SNR.
+- The injected log likelihood minus the best stored log likelihood. A positive
+  gap flags a known higher-likelihood point missed by the run, but does not
+  measure the probability mass in that region.
+
+Using the same detector responses, frequency masks and PSDs as the likelihood,
+we concatenate `h_I(f) * sqrt(4 / (T_I * PSD_I(f)))` over the detectors. Overlap
+is the real inner product divided by the two norms. Residual SNR is the norm of
+`h - h_injected` in those coordinates, retaining amplitude differences that a
+normalized overlap can hide. Time, phase and amplitude are **not** optimized:
+the demo fixes its extrinsics. This follows
+[Bilby's noise-weighted inner-product convention](https://bilby-dev.github.io/bilby/api/bilby.gw.utils.html).
+
+The combined **heuristic screen** passes only if the stage's stopping target
+was met, ESS is at least `--check-min-ess` (default 100), and the 5th percentile
+of overlap is at least `--overlap-min` (default 0.99). These are configurable
+screening choices, not calibrated convergence criteria. Overlap assesses signal
+recovery; it cannot establish parameter recovery, mode coverage, evidence
+accuracy, or posterior convergence. Residual SNR is descriptive, with no hard
+cut applied. The screen is reporting-only: it does not change sampling,
+termination criteria, or existing process exit codes.
+
+The distribution summaries use `--check-draws` (default 128) deterministic
+systematic draws from the weighted empirical posterior; duplicate waveforms
+are evaluated once. These are approximate posterior summaries, not 128 new
+independent samples. ESS is always computed from the original weights. Check
+time and diagnostic likelihood calls are recorded separately from sampling;
+pipeline time includes check time. Injection truth is used only for diagnostics.
+
+To check saved results without rerunning inference:
+
+```bash
+uv run --extra lvk python analysis/LIGO/fast_pp/rslice_morph_demo.py 48 \
+  --checks-only --output-dir docs/benchmarks/lvk-rslice-morph-20260915/bw2
+```
+
+### Start from an existing Bilby posterior
+
+The same demo accepts `--bilby-result PATH` in place of a fresh rslice run:
+
+```bash
+uv run --extra lvk python analysis/LIGO/fast_pp/rslice_morph_demo.py 0 \
+  --bilby-result analysis/LIGO/fast_pp/outdir/ozstar_seed0_20260915/raw/cheap_nlive1000_rslice_result.json \
+  --nlive 100 --bandwidth-scale 2 --max-seconds 180 \
+  --output-dir /tmp/seed0_from_existing_posterior
+```
+
+It compares the source priors/fixed parameters and sampled coordinate order,
+then checks fresh prior and likelihood values at 32 posterior rows. Only a
+zero offset or the known noise-evidence offset is accepted for stored likelihoods.
+The original JSON is preserved; the source hash, original sampler/live count,
+time/calls and audit are recorded in `rough.json`. All equal-weight Bilby
+posterior rows train the KDE. Their weight ESS equals their count and **does
+not** diagnose autocorrelation or mixing. A saved result JSON alone does not
+certify its stopping reason, so the imported stopping status is `UNKNOWN`.
+
+`--nlive` sets the new NISMO live count independently of the imported source's
+live count. Add `--training-only` to import/audit/check without running NISMO;
+that output can subsequently be supplied via `--rough-from`. Imported source
+labels are retained in the printed checks and corner plots. Original training
+cost and current import cost are reported separately; an expensive historical
+training run is not a new end-to-end speedup.

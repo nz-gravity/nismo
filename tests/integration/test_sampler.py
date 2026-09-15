@@ -496,3 +496,18 @@ def test_result_equal_weight_resampling_requires_explicit_rng() -> None:
     ).run(dlogz=0.4, max_iterations=50)
     with pytest.raises(TypeError, match="rng"):
         result.resample_equal(rng="seed")  # type: ignore[arg-type]
+
+
+def test_threshold_diagnostic_accepts_initial_zero_prior_support() -> None:
+    model = CallableModel(
+        ndim=1,
+        parameter_names=("x",),
+        log_likelihood_fn=lambda x: np.zeros(len(x)),
+        log_prior_fn=lambda x: np.where(np.abs(x[:, 0]) < 0.5, 0.0, -np.inf),
+    )
+    result = NISMOSampler(
+        model=model, importance_morph=StandardNormalProposal(), n_live=20, rng=8
+    ).run(dlogz=0.1, max_iterations=30)
+    assert np.count_nonzero(np.isneginf(result.dead_log_psi0)) >= 2
+    # -inf - (-inf) is NaN, but these ordered thresholds are valid.
+    assert summarize(result).thresholds_monotone

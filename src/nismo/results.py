@@ -355,7 +355,7 @@ class NISMOResult:
             raise ValueError("log_posterior_weights must have shape (niter + nlive,)")
         object.__setattr__(self, "log_posterior_weights", log_weights)
 
-        if self.niter and np.any(np.diff(self.dead_log_psi0) < 0.0):
+        if self.niter and np.any(self.dead_log_psi0[1:] < self.dead_log_psi0[:-1]):
             raise ValueError("dead pseudo-likelihood thresholds must be monotone")
         if not np.isclose(
             logsumexp(self.log_posterior_weights), 0.0, rtol=0.0, atol=1e-11
