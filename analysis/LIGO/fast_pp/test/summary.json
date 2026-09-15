@@ -1,0 +1,73 @@
+{
+  "scope": "Eight intrinsic parameters; injected extrinsics fixed. Pilot only.",
+  "versions": {
+    "nismo": "0.1.4",
+    "morphZ": "0.4.1",
+    "bilby": "2.8.2",
+    "dynesty": "3.1.0",
+    "lalsuite": "7.26.15"
+  },
+  "fingerprint": "18c7b9cffed38f6b459ba9d34fcf683e6954dc74f86cd3b17faf69fab28a2502",
+  "parameter_names": [
+    "chirp_mass",
+    "mass_ratio",
+    "a_1",
+    "a_2",
+    "tilt_1",
+    "tilt_2",
+    "phi_12",
+    "phi_jl"
+  ],
+  "rough_source": "fresh",
+  "rough": {
+    "index": 0,
+    "fingerprint": "18c7b9cffed38f6b459ba9d34fcf683e6954dc74f86cd3b17faf69fab28a2502",
+    "nlive": 100,
+    "seed": 1234,
+    "sample": "rslice",
+    "slices": 3,
+    "dlogz": 3.0,
+    "maxcall": 100000,
+    "final_remaining_dlogz": 2.9958236666725884,
+    "reached_target": true,
+    "logz": -16175.26566221287,
+    "logzerr": 0.40537518574916687,
+    "n_likelihood_calls": 25754,
+    "seconds": 53.159132521000174,
+    "posterior_ess": 82.25725761026673,
+    "n_training": 1335,
+    "n_unique_training": 247
+  },
+  "fit_seconds": 1.4900299959999757,
+  "nismo": {
+    "logz": -16173.626252535174,
+    "logzerr": 0.3417255640086519,
+    "success": true,
+    "termination_reason": "remaining_evidence",
+    "n_likelihood_calls": 172910,
+    "n_proposals": 183211,
+    "niter": 1684,
+    "seconds": 413.40733680499943,
+    "diagnostics": {
+      "posterior_ess": 726.7911268849641,
+      "relative_posterior_ess": 0.40739412941982295,
+      "proposal_acceptance_fraction": 0.009191587841341404,
+      "maximum_proposals_per_replacement": 3012,
+      "thresholds_monotone": false,
+      "conservative_log_remaining": -16175.118080232462,
+      "final_remaining_fraction": 0.09460233444442744,
+      "final_remaining_dlogz": 0.09938102234062315,
+      "final_live_ess": 91.40651154943976,
+      "final_live_mean_rse": 0.030816164525527545,
+      "final_live_logz_error": 0.0029152811027384575,
+      "final_logz_stability": 0.0006700353169435402,
+      "final_stopping_streak": 1,
+      "queue_efficiency": 1.0,
+      "compute_efficiency": 1.0
+    },
+    "warnings": []
+  },
+  "pipeline_seconds": 468.0564993219996,
+  "invocation_seconds": 470.58010943799945,
+  "pipeline_likelihood_calls": 198664
+}

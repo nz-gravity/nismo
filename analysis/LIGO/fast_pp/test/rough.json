@@ -1,0 +1,19 @@
+{
+  "index": 0,
+  "fingerprint": "18c7b9cffed38f6b459ba9d34fcf683e6954dc74f86cd3b17faf69fab28a2502",
+  "nlive": 100,
+  "seed": 1234,
+  "sample": "rslice",
+  "slices": 3,
+  "dlogz": 3.0,
+  "maxcall": 100000,
+  "final_remaining_dlogz": 2.9958236666725884,
+  "reached_target": true,
+  "logz": -16175.26566221287,
+  "logzerr": 0.40537518574916687,
+  "n_likelihood_calls": 25754,
+  "seconds": 53.159132521000174,
+  "posterior_ess": 82.25725761026673,
+  "n_training": 1335,
+  "n_unique_training": 247
+}

@@ -1,0 +1,222 @@
+{
+  "beta_tempering": {
+    "beta": 1.0,
+    "log_z_beta": 0.0,
+    "log_z_beta_error": 0.0,
+    "mc_effective_sample_size": 0.0,
+    "n_mc_samples": 0,
+    "normalization_exact": true,
+    "pool_size": 100000,
+    "sampling_method": "exact",
+    "unique_pool_size": 0
+  },
+  "config": {
+    "beta": 1.0,
+    "beta_mc_samples": 100000,
+    "dlogz": 0.1,
+    "ensemble_rwalk_settings": {
+      "covariance_jitter": 1e-10,
+      "covariance_shrinkage": 0.1,
+      "gamma": null,
+      "gaussian_scale": null,
+      "jitter_scale": 1e-06,
+      "move_weights": {
+        "de": 0.6,
+        "gaussian": 0.15,
+        "stretch": 0.25
+      },
+      "n_sweeps": 4,
+      "n_walkers": 8,
+      "stretch_scale": 1.5
+    },
+    "max_iterations": 10000,
+    "max_likelihood_calls": 200000,
+    "max_proposals_per_replacement": 100000,
+    "max_wall_time": 600,
+    "mor_rwalk_settings": {
+      "n_proposals": 100000,
+      "refill": false,
+      "refill_max_batches": 10,
+      "refill_min_acceptance": 0.05
+    },
+    "n_live": 100,
+    "parallel": {
+      "adaptation_interval": 20,
+      "backend": "compatibility",
+      "chains_per_task": 1,
+      "diagnostic_interval": 1,
+      "evaluation_chunk_size": 1024,
+      "initialization": "auto",
+      "n_workers": 1,
+      "queue_size": 1,
+      "scheduler": "epoch",
+      "worker_threads": null
+    },
+    "proposal_batch_size": 256,
+    "proposal_scheme": "mor-rwalk",
+    "proposal_update_interval": 25,
+    "rwalk_settings": {
+      "facc": 0.5,
+      "ncdim": null,
+      "walks": null
+    },
+    "srwalk_settings": {
+      "acceptance_window": 20,
+      "covariance_jitter": 1e-10,
+      "covariance_rebuild_interval": null,
+      "covariance_shrinkage": 0.25,
+      "covariance_update_interval": 1,
+      "dynamic_steps": true,
+      "facc": 0.5,
+      "max_step_growth": 2.0,
+      "max_steps": 5000,
+      "n_steps": 75,
+      "profile": false,
+      "scale": null,
+      "target_zero_move_probability": 0.001,
+      "zero_accept_scale_factor": 0.5,
+      "zero_move_policy": "allow"
+    },
+    "stopping": {
+      "consecutive": 1,
+      "criteria": [
+        {
+          "name": "remaining_dlogz",
+          "tolerance": 0.1
+        }
+      ],
+      "min_iterations": 0,
+      "mode": "all",
+      "stability_window": 10
+    },
+    "tie_policy": "strict"
+  },
+  "ensemble_move_totals": null,
+  "execution_diagnostics": {
+    "peak_outstanding_chains": 0,
+    "phase_seconds": [
+      [
+        "coordinator_commit_stopping",
+        0.802650100997198
+      ],
+      [
+        "finalization",
+        0.0031197999996948056
+      ],
+      [
+        "initial_evaluation",
+        193.16080501099987
+      ],
+      [
+        "morph_fit",
+        0.0
+      ],
+      [
+        "pool_startup",
+        0.0030829999996058177
+      ],
+      [
+        "proposal_and_beta",
+        0.05367200000000594
+      ],
+      [
+        "proposal_generation",
+        0.053133299999899464
+      ],
+      [
+        "run_total",
+        413.40605400499953
+      ],
+      [
+        "serial_evolution",
+        218.9996045920161
+      ]
+    ],
+    "task_timings": [],
+    "worker_execution_seconds": 218.9996045920161,
+    "worker_thread_counts": [
+      [
+        1,
+        1,
+        8
+      ]
+    ]
+  },
+  "files": {
+    "diagnostics": "diagnostics.json",
+    "plots": [],
+    "run_history": "run_history.npz",
+    "weighted_samples": "weighted_samples.npz"
+  },
+  "nonfinite_counts": {
+    "outside_prior": 10401,
+    "zero_likelihood": 0
+  },
+  "proposal_updates": [],
+  "queue_diagnostics": {
+    "compute_efficiency": 1.0,
+    "max_candidate_age": 0,
+    "prefetch_likelihood_calls": 82944,
+    "queue_candidates_consumed": 1043,
+    "queue_candidates_failed": 0,
+    "queue_candidates_invalidated": 0,
+    "queue_candidates_stale": 0,
+    "queue_candidates_unused": 0,
+    "queue_efficiency": 1.0,
+    "queue_jobs_completed": 1043,
+    "queue_jobs_submitted": 1043,
+    "queue_refills": 1043,
+    "total_candidate_age": 0,
+    "used_prefetch_likelihood_calls": 82944,
+    "wasted_prefetch_likelihood_calls": 0
+  },
+  "reproducibility": {
+    "importance_morph_description": "MorphMetadata(n_training=1335, ndim=8, parameter_names=('chirp_mass', 'mass_ratio', 'a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl'), kde_bw=\"{'chirp_mass': 0.6027211775910423, 'mass_ratio': 0.6027211775910423, 'a_1': 0.6027211775910423, 'a_2': 0.6027211775910423, 'tilt_1': 0.6027211775910423, 'tilt_2': 0.6027211775910423, 'phi_12': 0.6027211775910423, 'phi_jl': 0.6027211775910423}\", min_tc=None, top_k_greedy=1, group_source='in-memory', selected_groups=(('tilt_1', 'tilt_2'), ('a_2', 'mass_ratio'), ('a_1', 'phi_12'), ('chirp_mass', 'phi_jl')), single_parameters=(), morphz_version='0.4.1', rng_note='NISMO derives an integer seed from its Generator for each MorphZ resample call; MorphZ 0.4.1 restores legacy global RNG state.')",
+    "rng_bit_generator": "PCG64",
+    "rng_state_final": "{'bit_generator': 'PCG64', 'state': {'state': 229574219102138747589122132787923637508, 'inc': 63767714956675348395174918794534857427}, 'has_uint32': 1, 'uinteger': 1788813960}",
+    "rng_state_initial": "{'bit_generator': 'PCG64', 'state': {'state': 7171884250435708223905590486969251042, 'inc': 63767714956675348395174918794534857427}, 'has_uint32': 0, 'uinteger': 0}"
+  },
+  "result": {
+    "information": 11.677636109703123,
+    "logz": -16173.626252535174,
+    "logzerr": 0.3417255640086519,
+    "n_likelihood_calls": 172910,
+    "n_prior_calls": 183311,
+    "n_proposals": 183211,
+    "ndim": 8,
+    "niter": 1684,
+    "nlive": 100,
+    "parameter_names": [
+      "chirp_mass",
+      "mass_ratio",
+      "a_1",
+      "a_2",
+      "tilt_1",
+      "tilt_2",
+      "phi_12",
+      "phi_jl"
+    ],
+    "success": true,
+    "termination_reason": "remaining_evidence"
+  },
+  "run_diagnostics": {
+    "compute_efficiency": 1.0,
+    "conservative_log_remaining": -16175.118080232462,
+    "final_live_ess": 91.40651154943976,
+    "final_live_logz_error": 0.0029152811027384575,
+    "final_live_mean_rse": 0.030816164525527545,
+    "final_logz_stability": 0.0006700353169435402,
+    "final_remaining_dlogz": 0.09938102234062315,
+    "final_remaining_fraction": 0.09460233444442744,
+    "final_stopping_streak": 1,
+    "maximum_proposals_per_replacement": 3012,
+    "posterior_ess": 726.7911268849641,
+    "proposal_acceptance_fraction": 0.009191587841341404,
+    "queue_efficiency": 1.0,
+    "relative_posterior_ess": 0.40739412941982295,
+    "thresholds_monotone": false
+  },
+  "schema_version": 1,
+  "srwalk_diagnostics": null,
+  "warnings": []
+}

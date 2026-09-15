@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from nismo_computation import build_model, fixed_parameter_values
 
-from nismo import MorphProposal, NISMOSampler
+from nismo import MorphProposal, NISMOSampler, MORWalkSettings
 from nismo.diagnostics import summarize
 
 
@@ -167,7 +167,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--rough-seed", type=int, default=1234)
     parser.add_argument("--nismo-seed", type=int, default=5678)
-    parser.add_argument("--rough-dlogz", type=float, default=3.0)
+    parser.add_argument("--rough-dlogz", type=float, default=1.0)
     parser.add_argument("--slices", type=int, default=3)
     parser.add_argument("--rough-maxcall", type=int, default=100000)
     parser.add_argument("--bandwidth-scale", type=float, default=2.0)
@@ -261,16 +261,20 @@ def main(argv=None):
         result = NISMOSampler(
             model=model,
             importance_morph=proposal,
-            proposal_scheme="fixed_morph",
+            proposal_scheme="mor-rwalk",
+             mor_rwalk_settings=MORWalkSettings(
+            n_proposals=100_000,
+            refill=False,
+                         ),
             n_live=args.nlive,
             rng=args.nismo_seed,
-            proposal_batch_size=64,
+            proposal_batch_size=4*64,
         ).run(
             dlogz=args.dlogz,
             max_iterations=max(10000, 25 * args.nlive),
             max_likelihood_calls=args.max_calls,
             max_wall_time=args.max_seconds,
-            progress=progress,
+            progress=True,
         )
         nis_seconds = time.perf_counter() - nis_start
     diagnostics = asdict(summarize(result))

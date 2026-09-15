@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "n_training": 1335,
+    "ndim": 8,
+    "parameter_names": [
+      "chirp_mass",
+      "mass_ratio",
+      "a_1",
+      "a_2",
+      "tilt_1",
+      "tilt_2",
+      "phi_12",
+      "phi_jl"
+    ],
+    "kde_bw": "{'chirp_mass': 0.6027211775910423, 'mass_ratio': 0.6027211775910423, 'a_1': 0.6027211775910423, 'a_2': 0.6027211775910423, 'tilt_1': 0.6027211775910423, 'tilt_2': 0.6027211775910423, 'phi_12': 0.6027211775910423, 'phi_jl': 0.6027211775910423}",
+    "min_tc": null,
+    "top_k_greedy": 1,
+    "group_source": "in-memory",
+    "selected_groups": [
+      [
+        "tilt_1",
+        "tilt_2"
+      ],
+      [
+        "a_2",
+        "mass_ratio"
+      ],
+      [
+        "a_1",
+        "phi_12"
+      ],
+      [
+        "chirp_mass",
+        "phi_jl"
+      ]
+    ],
+    "single_parameters": [],
+    "morphz_version": "0.4.1",
+    "rng_note": "NISMO derives an integer seed from its Generator for each MorphZ resample call; MorphZ 0.4.1 restores legacy global RNG state."
+  },
+  "bandwidth_scale": 2.0,
+  "factors": {
+    "chirp_mass": 0.6027211775910423,
+    "mass_ratio": 0.6027211775910423,
+    "a_1": 0.6027211775910423,
+    "a_2": 0.6027211775910423,
+    "tilt_1": 0.6027211775910423,
+    "tilt_2": 0.6027211775910423,
+    "phi_12": 0.6027211775910423,
+    "phi_jl": 0.6027211775910423
+  }
+}

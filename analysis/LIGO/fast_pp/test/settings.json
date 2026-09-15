@@ -1,0 +1,15 @@
+{
+  "index": 0,
+  "output_dir": "test",
+  "rough_from": null,
+  "nlive": 100,
+  "rough_seed": 1234,
+  "nismo_seed": 5678,
+  "rough_dlogz": 3.0,
+  "slices": 3,
+  "rough_maxcall": 100000,
+  "bandwidth_scale": 2.0,
+  "dlogz": 0.1,
+  "max_seconds": 600,
+  "max_calls": 200000
+}
