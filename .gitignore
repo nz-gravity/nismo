@@ -1,4 +1,6 @@
 
+
+*.pdf
 */benchmarks/*
 *test*.sh
 *.log
