@@ -29,6 +29,12 @@ def run_dynesty(
     label=None,
     resume=False,
     plot_corner=True,
+    nact=20,
+    sample="rwalk",
+    bound=None,
+    slices=None,
+    dlogz=None,
+    maxmcmc=None,
 ):
     likelihood, priors, default_outdir, _, checkpoint_delta_t = load_simulation(
         index,
@@ -44,9 +50,26 @@ def run_dynesty(
             "Choose a new --output-dir or --label."
         )
 
+    # Only ``rwalk`` consumes ``nact``; slice-based methods use ``slices``
+    # instead, and passing the wrong one makes bilby reject the kwargs.
+    sampler_kwargs = dict(
+        nlive=nlive,
+        sample=sample,
+    )
+    if sample == "rwalk":
+        sampler_kwargs["nact"] = nact
+        if maxmcmc is not None:
+            sampler_kwargs["maxmcmc"] = maxmcmc
+    elif slices is not None:
+        sampler_kwargs["slices"] = slices
+    if bound is not None:
+        sampler_kwargs["bound"] = bound
+    if dlogz is not None:
+        sampler_kwargs["dlogz"] = dlogz
+
     print(
-        f"Running Dynesty seed={index}, nlive={nlive}, label={run_label}, "
-        f"outdir={outdir}..."
+        f"Running Dynesty seed={index}, label={run_label}, outdir={outdir}, "
+        f"settings={sampler_kwargs}..."
     )
     result = bilby.run_sampler(
         likelihood,
@@ -54,15 +77,13 @@ def run_dynesty(
         sampler="dynesty",
         outdir=outdir,
         label=run_label,
-        nlive=nlive,
-        nact=20,
-        sample="rwalk",
         resume=resume,
         npool=NPOOL,
         check_point_delta_t=checkpoint_delta_t,
         check_point_plot=True,
         conversion_function=bilby.gw.conversion.generate_all_bbh_parameters,
         result_class=bilby.gw.result.CBCResult,
+        **sampler_kwargs,
     )
     if plot_corner:
         result.plot_corner()
@@ -110,6 +131,24 @@ def main():
         help="continue from the matching Bilby/Dynesty resume checkpoint",
     )
     parser.add_argument("--no-corner", action="store_true")
+    # Cost/quality knobs for cheap "rough posterior" runs.  nact drives the
+    # chain length per replacement and is the dominant cost multiplier; nlive
+    # drives mode discovery and should not be cut to buy speed.
+    parser.add_argument(
+        "--nact",
+        type=int,
+        default=20,
+        help="rwalk chain length multiplier (bilby's own default is 2)",
+    )
+    parser.add_argument(
+        "--sample",
+        default="rwalk",
+        help="dynesty sampling method, e.g. rwalk, rslice, slice",
+    )
+    parser.add_argument("--bound", default=None, help="dynesty bound, e.g. live, multi")
+    parser.add_argument("--slices", type=int, default=None, help="slice-method slices")
+    parser.add_argument("--dlogz", type=float, default=None)
+    parser.add_argument("--maxmcmc", type=int, default=None)
     args = parser.parse_args()
 
     if args.nlive <= 0:
@@ -132,6 +171,12 @@ def main():
             label=args.label,
             resume=args.resume,
             plot_corner=not args.no_corner,
+            nact=args.nact,
+            sample=args.sample,
+            bound=args.bound,
+            slices=args.slices,
+            dlogz=args.dlogz,
+            maxmcmc=args.maxmcmc,
         )
     else:
         run_mcmc(args.index)
