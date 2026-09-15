@@ -2,14 +2,17 @@
 #SBATCH --job-name=nismo_dyn100
 #SBATCH --output=nismo_dynesty_nlive100_%A_%a.out
 #SBATCH --error=nismo_dynesty_nlive100_%A_%a.err
-#SBATCH --time=10:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=4G
 #SBATCH --array=0-99
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# OzSTAR's sbatch stages this script into a per-job /jobfs directory, so
+# BASH_SOURCE points there rather than at the repository.  Resolve from a
+# fixed absolute path (override with NISMO_FAST_PP_DIR) instead.
+SCRIPT_DIR="${NISMO_FAST_PP_DIR:-/fred/oz200/avajpeyi/projects/MORPH/nismo/analysis/LIGO/fast_pp}"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 LVK_SEED="${SLURM_ARRAY_TASK_ID}"
 NISMO_SEED="${NISMO_SEED:-20260811}"
