@@ -12,6 +12,7 @@ from tests.integration.test_parallel_replacement import ConstantNormalModel
 
 from nismo import (
     CallableModel,
+    MorphProposal,
     NISMOConfig,
     NISMOSampler,
     ParallelSettings,
@@ -22,6 +23,30 @@ from nismo.execution import ExecutionService
 from nismo.replacement import ReplacementWorkerContext
 
 pytestmark = pytest.mark.integration
+
+
+def test_numeric_morph_bandwidth_runs_with_spawned_workers():
+    proposal = MorphProposal.fit(
+        np.random.default_rng(42).normal(size=(160, 1)),
+        groups=[],
+        kde_bw=1.4,
+    )
+    result = NISMOSampler(
+        model=ConstantNormalModel(),
+        importance_morph=proposal,
+        proposal_scheme="s-rwalk",
+        n_live=20,
+        n_workers=4,
+        rng=987,
+        tie_policy="randomized_plateau",
+        srwalk_settings=SRWalkSettings(
+            n_steps=6, max_steps=24, dynamic_steps=False, profile=True
+        ),
+    ).run(dlogz=0.00001, max_iterations=5)
+    assert result.niter == 5
+    assert len(result.execution_diagnostics.worker_thread_counts) == 4
+    assert np.isfinite(result.dead_log_likelihood).all()
+
 
 MODES = [
     ParallelSettings(backend="vectorized", queue_size=5, chains_per_task=3),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,43 @@ from nismo import MorphProposal
 from nismo.exceptions import InvalidProposalOutput
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("groups", [[], [[["x", "y"], 2.5]]])
+@pytest.mark.parametrize(
+    "bandwidth", [1.4, {"x": 0.8, "y": 1.4, "z": 1.1}, "silverman", "scott"]
+)
+def test_morph_bandwidth_pickle_preserves_fitted_proposal(groups, bandwidth):
+    import morphZ
+
+    training = np.random.default_rng(42).normal(size=(160, 3))
+    names = ["x", "y", "z"]
+    reference = morphZ.GroupKDE(
+        training, param_tc=groups, param_names=names, kde_bw=bandwidth
+    )
+    proposal = MorphProposal.fit(
+        training, groups=groups, param_names=names, kde_bw=bandwidth
+    )
+    restored = pickle.loads(pickle.dumps(proposal))
+    points = np.random.default_rng(43).normal(size=(7, 3))
+    expected = np.array([reference.logpdf(point) for point in points])
+    for candidate in (proposal, restored):
+        np.testing.assert_array_equal(candidate.log_prob(points), expected)
+        assert candidate.metadata == proposal.metadata
+        components = [
+            *candidate._backend.group_kdes,
+            *candidate._backend.single_kdes.values(),
+        ]
+        originals = [*reference.group_kdes, *reference.single_kdes.values()]
+        for actual, original in zip(components, originals, strict=True):
+            assert actual["kde"].covariance_factor() == original["kde"].factor
+            np.testing.assert_array_equal(
+                actual["kde"].covariance, original["kde"].covariance
+            )
+    np.testing.assert_array_equal(
+        restored.sample(20, np.random.default_rng(44)),
+        proposal.sample(20, np.random.default_rng(44)),
+    )
 
 
 def test_morph_adapter_sampling_density_and_seed_reproducibility() -> None:

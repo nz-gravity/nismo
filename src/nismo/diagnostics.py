@@ -65,7 +65,10 @@ def summarize(result: NISMOResult) -> RunDiagnostics:
         relative_posterior_ess=ess / n_weighted,
         proposal_acceptance_fraction=acceptance,
         maximum_proposals_per_replacement=maximum_proposals,
-        thresholds_monotone=bool(np.all(np.diff(result.dead_log_psi0) >= 0.0)),
+        # Direct comparison handles repeated -inf values from zero prior support.
+        thresholds_monotone=bool(
+            np.all(result.dead_log_psi0[1:] >= result.dead_log_psi0[:-1])
+        ),
         conservative_log_remaining=conservative,
         final_remaining_fraction=final_remaining_fraction,
         final_remaining_dlogz=final_remaining_dlogz,
